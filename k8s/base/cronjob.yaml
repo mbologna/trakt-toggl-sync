@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trakt-to-toggl
+  namespace: trakt-to-toggl
+spec:
+  schedule: "0 2 * * 6,3"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: trakt-to-toggl
+            image: mbologna/trakt-to-toggl:latest
+            volumeMounts:
+            - name: trakt-tokens-volume
+              mountPath: /app/.trakt_tokens.json  # Mount the secret at this path inside the container
+              subPath: .trakt_tokens.json  # Mount as a single file, not a directory
+            envFrom:
+            - configMapRef:
+                name: trakt-to-toggl-env
+            - secretRef:
+                name: trakt-to-toggl-secret
+            resources:
+              requests:
+                memory: "32Mi"
+                cpu: "100m"
+              limits:
+                memory: "128Mi"
+                cpu: "500m"
+          restartPolicy: Never
+          volumes:
+          - name: trakt-tokens-volume
+            secret:
+              secretName: trakt-tokens-secret
