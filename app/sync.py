@@ -189,12 +189,12 @@ class TogglAPI:
         # Check if there's an existing entry with the same description, start, stop, project_id, tags, and workspace_id
         for entry in entries:
             entry_start_time = normalize_timestamp(entry["start"])
-            entry_end_time = normalize_timestamp(entry["stop"])
+            entry_end_time = normalize_timestamp(entry["stop"]) if entry["stop"] else None
 
             if (
                 entry["description"] == description
                 and entry_start_time == start_time
-                and entry_end_time == end_time
+                and (entry_end_time == end_time if entry_end_time else False)
                 and entry["project_id"] == TOGGL_PROJECT_ID
                 and set(entry["tags"]) == set(TOGGL_TAGS)
                 and entry["wid"] == TOGGL_WORKSPACE_ID
