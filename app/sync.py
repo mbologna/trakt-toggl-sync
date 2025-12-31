@@ -9,18 +9,14 @@ import sys
 # Load environment variables
 load_dotenv()
 
-# Configuration with safer handling of environment variables
+# Configuration
 TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
 TRAKT_CLIENT_SECRET = os.getenv("TRAKT_CLIENT_SECRET")
 TRAKT_HISTORY_DAYS = int(os.getenv("TRAKT_HISTORY_DAYS", 7))
 TOGGL_API_TOKEN = os.getenv("TOGGL_API_TOKEN")
-TOGGL_WORKSPACE_ID = os.getenv("TOGGL_WORKSPACE_ID")
-TOGGL_PROJECT_ID = os.getenv("TOGGL_PROJECT_ID")
-TOGGL_TAGS = os.getenv("TOGGL_TAGS", "").split(",")
-
-# Fallback to default value or None if not set
-TOGGL_WORKSPACE_ID = int(TOGGL_WORKSPACE_ID) if TOGGL_WORKSPACE_ID else None
-TOGGL_PROJECT_ID = int(TOGGL_PROJECT_ID) if TOGGL_PROJECT_ID else None
+TOGGL_WORKSPACE_ID = int(os.getenv("TOGGL_WORKSPACE_ID")) if os.getenv("TOGGL_WORKSPACE_ID") else None
+TOGGL_PROJECT_ID = int(os.getenv("TOGGL_PROJECT_ID")) if os.getenv("TOGGL_PROJECT_ID") else None
+TOGGL_TAGS = os.getenv("TOGGL_TAGS", "").split(",") if os.getenv("TOGGL_TAGS") else []
 
 # Constants
 TRAKT_TOKEN_FILE = ".trakt_tokens.json"
@@ -32,7 +28,6 @@ TRAKT_API_HEADERS = {
 }
 
 
-# Utility Functions
 def load_json_file(file_path):
     if os.path.exists(file_path):
         with open(file_path, "r") as f:
@@ -43,15 +38,13 @@ def load_json_file(file_path):
 def save_json_file(file_path, data):
     with open(file_path, "w") as f:
         json.dump(data, f)
-    os.chmod(file_path, 0o600)  # Restrict file permissions
+    os.chmod(file_path, 0o600)
 
 
 def timestamp():
-    """Generate current timestamp for logging."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# Function to check if all required environment variables are set
 def check_required_env_variables():
     required_env_vars = [
         "TRAKT_CLIENT_ID",
@@ -60,15 +53,10 @@ def check_required_env_variables():
         "TOGGL_WORKSPACE_ID",
         "TOGGL_PROJECT_ID",
     ]
-
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-
     if missing_vars:
-        print(
-            f"[{timestamp()}] Error: Missing required environment variables: {', '.join(missing_vars)}",
-            file=sys.stderr,
-        )
-        sys.exit(1)  # Exit the script if variables are missing
+        print(f"[{timestamp()}] Error: Missing required environment variables: {', '.join(missing_vars)}", file=sys.stderr)
+        sys.exit(1)
 
 
 # Trakt API
@@ -79,13 +67,10 @@ class TraktAPI:
     def is_token_near_expiration(expiration_time):
         now = datetime.now()
         expiration = datetime.fromisoformat(expiration_time)
-        return now >= expiration - timedelta(
-            minutes=TRAKT_TOKEN_EXPIRATION_BUFFER_MINUTES
-        )
+        return now >= expiration - timedelta(minutes=TRAKT_TOKEN_EXPIRATION_BUFFER_MINUTES)
 
     @staticmethod
     def authenticate():
-        """Authenticate with Trakt via device flow."""
         response = requests.post(
             f"{TraktAPI.BASE_URL}/oauth/device/code",
             json={"client_id": TRAKT_CLIENT_ID},
@@ -94,9 +79,7 @@ class TraktAPI:
         response.raise_for_status()
         device_data = response.json()
 
-        print(
-            f"[{timestamp()}] Visit {device_data['verification_url']} and enter the code: {device_data['user_code']}"
-        )
+        print(f"[{timestamp()}] Visit {device_data['verification_url']} and enter the code: {device_data['user_code']}")
 
         while True:
             time.sleep(device_data["interval"])
@@ -106,9 +89,7 @@ class TraktAPI:
             )
             if response.status_code == 200:
                 tokens = response.json()
-                tokens["expires_at"] = (
-                    datetime.now() + timedelta(seconds=tokens["expires_in"])
-                ).isoformat()
+                tokens["expires_at"] = (datetime.now() + timedelta(seconds=tokens["expires_in"])).isoformat()
                 save_json_file(TRAKT_TOKEN_FILE, tokens)
                 print(f"[{timestamp()}] Authentication successful!")
                 return tokens
@@ -121,29 +102,118 @@ class TraktAPI:
 
     @staticmethod
     def refresh_token(refresh_token):
-        """Refresh Trakt access token."""
-        response = requests.post(
-            f"{TraktAPI.BASE_URL}/oauth/token",
-            json={
-                "client_id": TRAKT_CLIENT_ID,
-                "client_secret": TRAKT_CLIENT_SECRET,
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            },
-        )
-        response.raise_for_status()
-        tokens = response.json()
-        tokens["expires_at"] = (
-            datetime.now() + timedelta(seconds=tokens["expires_in"])
-        ).isoformat()
-        save_json_file(TRAKT_TOKEN_FILE, tokens)
-        print(f"[{timestamp()}] Token refreshed successfully!")
-        return tokens
+        try:
+            response = requests.post(
+                f"{TraktAPI.BASE_URL}/oauth/token",
+                json={
+                    "client_id": TRAKT_CLIENT_ID,
+                    "client_secret": TRAKT_CLIENT_SECRET,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                },
+            )
+            response.raise_for_status()
+            tokens = response.json()
+            tokens["expires_at"] = (datetime.now() + timedelta(seconds=tokens["expires_in"])).isoformat()
+            save_json_file(TRAKT_TOKEN_FILE, tokens)
+            print(f"[{timestamp()}] Token refreshed successfully!")
+            return tokens
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 400:
+                print(f"[{timestamp()}] Refresh token expired. Re-authenticating...")
+                if os.path.exists(TRAKT_TOKEN_FILE):
+                    os.remove(TRAKT_TOKEN_FILE)
+                return TraktAPI.authenticate()
+            else:
+                raise
+
+    @staticmethod
+    def get_headers(access_token):
+        return {**TRAKT_API_HEADERS, "Authorization": f"Bearer {access_token}"}
+
+    @staticmethod
+    def fetch_full_history(access_token):
+        """Fetch complete viewing history from Trakt."""
+        headers = TraktAPI.get_headers(access_token)
+        history = []
+        page = 1
+
+        print(f"[{timestamp()}] Fetching complete Trakt history...")
+        while True:
+            response = requests.get(
+                f"{TraktAPI.BASE_URL}/sync/history",
+                headers=headers,
+                params={"page": page, "limit": 1000}
+            )
+            response.raise_for_status()
+            data = response.json()
+            if not data:
+                break
+            history.extend(data)
+            page += 1
+
+        print(f"[{timestamp()}] Fetched {len(history)} total Trakt history entries")
+        return history
+
+    @staticmethod
+    def format_entry_description(entry):
+        """Format entry for display."""
+        if entry['type'] == 'movie':
+            movie = entry.get('movie', {})
+            return f"🎞️ {movie.get('title', 'Unknown')} ({movie.get('year', 'N/A')})"
+        else:
+            show = entry.get('show', {})
+            episode = entry.get('episode', {})
+            return f"📺 {show.get('title', 'Unknown')} - S{episode.get('season', 0):02}E{episode.get('number', 0):02}"
+
+    @staticmethod
+    def remove_duplicates(access_token):
+        """Remove duplicate entries from Trakt history, keeping most recent."""
+        print(f"[{timestamp()}] Starting Trakt deduplication...")
+        history = TraktAPI.fetch_full_history(access_token)
+
+        unique_items = {}
+        for entry in history:
+            # Create unique key based on type and ID
+            if entry['type'] == 'movie':
+                item_key = ('movie', entry.get('movie', {}).get('ids', {}).get('trakt'))
+            else:
+                item_key = ('episode', entry.get('episode', {}).get('ids', {}).get('trakt'))
+
+            if not item_key[1]:
+                continue
+
+            # Keep entry with most recent watched_at date
+            if item_key not in unique_items or unique_items[item_key]['watched_at'] < entry['watched_at']:
+                unique_items[item_key] = entry
+
+        duplicates = [entry for entry in history if entry not in unique_items.values()]
+
+        if duplicates:
+            print(f"[{timestamp()}] Found {len(duplicates)} duplicate Trakt entries to remove:")
+            for dup in duplicates:
+                desc = TraktAPI.format_entry_description(dup)
+                watched = dup['watched_at'][:10]  # Just the date
+                print(f"  - {desc} (watched: {watched})")
+
+            headers = TraktAPI.get_headers(access_token)
+            payload = {"ids": [entry['id'] for entry in duplicates]}
+            response = requests.post(
+                f"{TraktAPI.BASE_URL}/sync/history/remove",
+                headers=headers,
+                json=payload
+            )
+            if response.status_code == 200:
+                print(f"[{timestamp()}] Successfully removed {len(duplicates)} duplicate Trakt entries")
+            else:
+                print(f"[{timestamp()}] Failed to delete Trakt duplicates: {response.status_code}", file=sys.stderr)
+        else:
+            print(f"[{timestamp()}] No Trakt duplicates found")
 
     @staticmethod
     def fetch_history(access_token, start_date):
-        """Fetch viewing history from Trakt."""
-        headers = {**TRAKT_API_HEADERS, "Authorization": f"Bearer {access_token}"}
+        """Fetch viewing history from Trakt starting from a specific date."""
+        headers = TraktAPI.get_headers(access_token)
         history = []
         page = 1
 
@@ -163,49 +233,150 @@ class TraktAPI:
         return history
 
 
-# Toggl API
+# Toggl API with caching
 class TogglAPI:
     BASE_URL = "https://api.track.toggl.com/api/v9"
+    _cached_entries = None
+    _cache_timestamp = None
+    _cache_duration = 300  # Cache for 5 minutes
+
+    @staticmethod
+    def parse_time(time_str):
+        """Parse Toggl time strings to datetime."""
+        if time_str.endswith('Z'):
+            time_str = time_str[:-1] + '+00:00'
+        return datetime.fromisoformat(time_str)
+
+    @staticmethod
+    def normalize_timestamp(timestamp):
+        """Normalize timestamps for comparison."""
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(microsecond=0)
+
+    @staticmethod
+    def get_cached_entries(force_refresh=False):
+        """Get cached Toggl entries or fetch if cache is stale."""
+        now = time.time()
+        if (force_refresh or
+            TogglAPI._cached_entries is None or
+            TogglAPI._cache_timestamp is None or
+            now - TogglAPI._cache_timestamp > TogglAPI._cache_duration):
+
+            response = requests.get(
+                f"{TogglAPI.BASE_URL}/me/time_entries",
+                auth=(TOGGL_API_TOKEN, "api_token"),
+            )
+            response.raise_for_status()
+            TogglAPI._cached_entries = response.json()
+            TogglAPI._cache_timestamp = now
+
+        return TogglAPI._cached_entries
+
+    @staticmethod
+    def remove_duplicates():
+        """Remove duplicate entries from Toggl, keeping most recent."""
+        print(f"[{timestamp()}] Starting Toggl deduplication...")
+
+        # Fetch all entries for the project from the last year
+        today = datetime.now()
+        one_year_ago = today - timedelta(days=365)
+        all_entries = []
+        current_before = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        while True:
+            params = {"before": current_before}
+            response = requests.get(
+                f"{TogglAPI.BASE_URL}/me/time_entries",
+                params=params,
+                auth=(TOGGL_API_TOKEN, "api_token")
+            )
+            response.raise_for_status()
+            batch = response.json()
+
+            if not batch:
+                break
+
+            project_entries = [e for e in batch if e.get('project_id') == TOGGL_PROJECT_ID]
+            all_entries.extend(project_entries)
+
+            oldest_entry = min(batch, key=lambda x: x.get('start', ''))
+            oldest_time = TogglAPI.parse_time(oldest_entry['start']).replace(tzinfo=None)
+
+            if oldest_time < one_year_ago:
+                break
+
+            current_before = (TogglAPI.parse_time(oldest_entry['start']) - timedelta(milliseconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        # Filter to last year only
+        filtered_entries = [
+            e for e in all_entries
+            if TogglAPI.parse_time(e['start']).replace(tzinfo=None) >= one_year_ago
+        ]
+
+        print(f"[{timestamp()}] Found {len(filtered_entries)} Toggl entries in project")
+
+        # Find duplicates by description
+        entries_by_description = {}
+        for entry in filtered_entries:
+            desc = entry.get('description', '')
+            if desc:
+                if desc not in entries_by_description:
+                    entries_by_description[desc] = []
+                entries_by_description[desc].append(entry)
+
+        duplicates = {desc: entries for desc, entries in entries_by_description.items() if len(entries) > 1}
+
+        if duplicates:
+            total_deleted = 0
+            entries_to_delete_count = sum(len(entries) - 1 for entries in duplicates.values())
+            print(f"[{timestamp()}] Found {entries_to_delete_count} duplicate Toggl entries to remove:")
+
+            for description, entries in duplicates.items():
+                print(f"  - {description} ({len(entries)} occurrences)")
+                entries.sort(key=lambda x: x.get('start', ''))
+                entries_to_delete = entries[:-1]
+
+                for entry in entries_to_delete:
+                    start = TogglAPI.parse_time(entry['start']).strftime("%Y-%m-%d %H:%M")
+                    print(f"    Deleting: {start}")
+                    response = requests.delete(
+                        f"{TogglAPI.BASE_URL}/time_entries/{entry['id']}",
+                        auth=(TOGGL_API_TOKEN, "api_token")
+                    )
+                    if response.status_code == 200:
+                        total_deleted += 1
+                    else:
+                        print(f"[{timestamp()}] Failed to delete Toggl entry {entry['id']}", file=sys.stderr)
+
+            print(f"[{timestamp()}] Successfully removed {total_deleted} duplicate Toggl entries")
+            # Clear cache after deletion
+            TogglAPI._cached_entries = None
+        else:
+            print(f"[{timestamp()}] No Toggl duplicates found")
 
     @staticmethod
     def entry_exists(description, start_time, end_time):
-        # Normalize timestamps to remove time zone differences
-        def normalize_timestamp(timestamp):
-            return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(
-                microsecond=0
-            )
+        """Check if entry exists using cached data."""
+        start_time = TogglAPI.normalize_timestamp(start_time)
+        end_time = TogglAPI.normalize_timestamp(end_time)
 
-        start_time = normalize_timestamp(start_time)
-        end_time = normalize_timestamp(end_time)
+        entries = TogglAPI.get_cached_entries()
 
-        response = requests.get(
-            f"{TogglAPI.BASE_URL}/me/time_entries",
-            auth=(TOGGL_API_TOKEN, "api_token"),
-        )
-        response.raise_for_status()
-
-        entries = response.json()
-
-        # Check if there's an existing entry with the same description, start, stop, project_id, tags, and workspace_id
         for entry in entries:
-            entry_start_time = normalize_timestamp(entry["start"])
-            entry_end_time = normalize_timestamp(entry["stop"]) if entry["stop"] else None
+            entry_start = TogglAPI.normalize_timestamp(entry["start"])
+            entry_end = TogglAPI.normalize_timestamp(entry["stop"]) if entry.get("stop") else None
 
-            if (
-                entry["description"] == description
-                and entry_start_time == start_time
-                and (entry_end_time == end_time if entry_end_time else False)
-                and entry["project_id"] == TOGGL_PROJECT_ID
-                and set(entry["tags"]) == set(TOGGL_TAGS)
-                and entry["wid"] == TOGGL_WORKSPACE_ID
-            ):
+            if (entry["description"] == description
+                and entry_start == start_time
+                and (entry_end == end_time if entry_end else False)
+                and entry.get("project_id") == TOGGL_PROJECT_ID
+                and set(entry.get("tags", [])) == set(TOGGL_TAGS)
+                and entry.get("wid") == TOGGL_WORKSPACE_ID):
                 return True
         return False
 
     @staticmethod
     def create_entry(description, start_time, end_time):
         if TogglAPI.entry_exists(description, start_time, end_time):
-            print(f"[{timestamp()}] Entry '{description}' already exists. Skipping.")
             return
 
         data = {
@@ -223,15 +394,13 @@ class TogglAPI:
             auth=(TOGGL_API_TOKEN, "api_token"),
         )
         if response.status_code == 200:
-            print(f"[{timestamp()}] Toggl entry created: {description}")
+            print(f"[{timestamp()}] Created: {description}")
+            # Invalidate cache after creating entry
+            TogglAPI._cached_entries = None
         else:
-            print(
-                f"[{timestamp()}] Failed to create Toggl entry: {response.text}",
-                file=sys.stderr,
-            )
+            print(f"[{timestamp()}] Failed to create entry: {response.text}", file=sys.stderr)
 
 
-# Main Process
 def process_history_item(item):
     """Process a single history item."""
     watched_at = item["watched_at"]
@@ -239,7 +408,8 @@ def process_history_item(item):
 
     if item_type == "episode":
         title = (
-            f"📺 {item['show']['title']} - S{item['episode']['season']:02}E{item['episode']['number']:02} - "
+            f"📺 {item['show']['title']} - "
+            f"S{item['episode']['season']:02}E{item['episode']['number']:02} - "
             f"{item['episode']['title']}"
         )
         runtime = item["episode"]["runtime"]
@@ -258,20 +428,36 @@ def process_history_item(item):
 
 
 def main():
-    check_required_env_variables()  # Check environment variables
+    print(f"[{timestamp()}] ===== Starting Trakt to Toggl Sync with Deduplication =====")
 
+    check_required_env_variables()
+
+    # Handle Trakt authentication
     tokens = load_json_file(TRAKT_TOKEN_FILE)
     if not tokens:
         tokens = TraktAPI.authenticate()
     elif TraktAPI.is_token_near_expiration(tokens["expires_at"]):
         tokens = TraktAPI.refresh_token(tokens["refresh_token"])
 
-    print(f"Fetching Trakt history for the last {TRAKT_HISTORY_DAYS} days...")
+    # Step 1: Remove Trakt duplicates
+    print(f"\n[{timestamp()}] === Step 1: Removing Trakt Duplicates ===")
+    TraktAPI.remove_duplicates(tokens["access_token"])
+
+    # Step 2: Remove Toggl duplicates
+    print(f"\n[{timestamp()}] === Step 2: Removing Toggl Duplicates ===")
+    TogglAPI.remove_duplicates()
+
+    # Step 3: Sync from Trakt to Toggl
+    print(f"\n[{timestamp()}] === Step 3: Syncing Trakt to Toggl ===")
+    print(f"[{timestamp()}] Fetching Trakt history for the last {TRAKT_HISTORY_DAYS} days...")
     start_date = (datetime.now() - timedelta(days=TRAKT_HISTORY_DAYS)).isoformat() + "Z"
     history = TraktAPI.fetch_history(tokens["access_token"], start_date)
 
+    print(f"[{timestamp()}] Processing {len(history)} entries...")
     for item in history:
         process_history_item(item)
+
+    print(f"\n[{timestamp()}] ===== Sync Complete =====")
 
 
 if __name__ == "__main__":
