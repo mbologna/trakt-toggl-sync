@@ -104,8 +104,11 @@ docker-push:
 
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
-	kubectl apply -f k8s/base/namespace.yaml
-	kubectl apply -f k8s/secrets/
+	@echo "NOTE: Make sure you've created the namespace and trakt-tokens secret first!"
+	@echo "See README for full deployment steps."
+	@echo ""
+	kubectl apply -f k8s/secrets/configmap.yaml
+	kubectl apply -f k8s/secrets/secret.yaml
 	kubectl apply -f k8s/base/cronjob.yaml
 	@echo "Deployed"
 
