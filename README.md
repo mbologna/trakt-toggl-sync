@@ -84,7 +84,7 @@ make format     # Format code
 # One-time setup for multi-platform builds
 make docker-setup
 
-# Build for local architecture only
+# Build for local architecture
 make docker-build
 
 # Run locally
@@ -96,12 +96,39 @@ make docker-push
 
 ### Kubernetes
 
+**Important: Authenticate locally before deploying to K8s**
+
 ```bash
-# Setup secrets in k8s/secrets/
-make k8s-deploy      # Deploy
-make k8s-status      # Check status
-make k8s-logs        # View logs
-make k8s-manual      # Trigger manually
+# Step 1: Run locally to authenticate with Trakt
+make run
+# Complete the browser authentication - this creates .trakt_tokens.json
+
+# Step 2: Create namespace
+kubectl create namespace trakt-toggl
+
+# Step 3: Create token secret from your local token file
+kubectl create secret generic trakt-tokens \
+  --from-file=.trakt_tokens.json=.trakt_tokens.json \
+  --namespace=trakt-toggl
+
+# Step 4: Setup other secrets
+cp k8s/base/configmap-template.yaml k8s/secrets/configmap.yaml
+cp k8s/base/secret-template.yaml k8s/secrets/secret.yaml
+# Edit k8s/secrets/*.yaml with your values
+
+# Step 5: Apply secrets
+kubectl apply -f k8s/secrets/configmap.yaml
+kubectl apply -f k8s/secrets/secret.yaml
+
+# Step 6: Deploy CronJob
+kubectl apply -f k8s/base/cronjob.yaml
+
+# Step 7: Verify
+make k8s-status
+make k8s-logs
+
+# Manually trigger a sync
+make k8s-manual
 ```
 
 ## How It Works
@@ -143,14 +170,6 @@ make test-cov
 # Clean cache
 make clean
 ```
-
-## CI/CD
-
-GitHub Actions automatically:
-- Lints with Ruff
-- Runs tests on Python 3.14
-- Builds multi-platform Docker images
-- Pushes to Docker Hub (on main branch)
 
 ## Troubleshooting
 
