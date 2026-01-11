@@ -1,0 +1,20 @@
+services:
+  trakt-toggl-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      # Persist token file between runs
+      - ./data:/app/data
+    environment:
+      # Override token file location to use mounted volume
+      - TRAKT_TOKEN_FILE=/app/data/.trakt_tokens.json
+      # Force unbuffered output so we see logs immediately
+      - PYTHONUNBUFFERED=1
+    # Run once and exit
+    restart: "no"
+    # Add interactive terminal for first-time auth
+    stdin_open: true
+    tty: true
