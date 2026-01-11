@@ -32,7 +32,7 @@ install:
 
 run:
 	@echo "Running sync..."
-	uv run src/sync.py
+	cd src && uv run python -u sync.py
 
 test:
 	@echo "Running tests..."
