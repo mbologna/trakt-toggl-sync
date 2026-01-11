@@ -1,35 +1,89 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: trakt-to-toggl
-  namespace: trakt-to-toggl
+  name: trakt-toggl-sync
+  namespace: trakt-toggl
 spec:
-  schedule: "0 2 * * 6,3"
+  # Run every 6 hours
+  schedule: "0 */6 * * *"
+  # Keep last 3 successful and 1 failed job for debugging
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  # Don't allow concurrent runs
+  concurrencyPolicy: Forbid
   jobTemplate:
     spec:
+      # Clean up completed jobs after 1 hour
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 2
       template:
+        metadata:
+          labels:
+            app: trakt-toggl-sync
         spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
           containers:
-          - name: trakt-to-toggl
-            image: mbologna/trakt-to-toggl:latest
+          - name: sync
+            image: docker.io/mbologna/trakt-toggl-sync:latest
+            imagePullPolicy: Always
+            env:
+            # From ConfigMap
+            - name: TRAKT_HISTORY_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: trakt-toggl-config
+                  key: TRAKT_HISTORY_DAYS
+            - name: TOGGL_WORKSPACE_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: trakt-toggl-config
+                  key: TOGGL_WORKSPACE_ID
+            - name: TOGGL_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: trakt-toggl-config
+                  key: TOGGL_PROJECT_ID
+            - name: TOGGL_TAGS
+              valueFrom:
+                configMapKeyRef:
+                  name: trakt-toggl-config
+                  key: TOGGL_TAGS
+            # From Secret
+            - name: TRAKT_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: trakt-toggl-credentials
+                  key: TRAKT_CLIENT_ID
+            - name: TRAKT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: trakt-toggl-credentials
+                  key: TRAKT_CLIENT_SECRET
+            - name: TOGGL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: trakt-toggl-credentials
+                  key: TOGGL_API_TOKEN
+            # Token file location
+            - name: TRAKT_TOKEN_FILE
+              value: "/app/data/.trakt_tokens.json"
             volumeMounts:
-            - name: trakt-tokens-volume
-              mountPath: /app/.trakt_tokens.json  # Mount the secret at this path inside the container
-              subPath: .trakt_tokens.json  # Mount as a single file, not a directory
-            envFrom:
-            - configMapRef:
-                name: trakt-to-toggl-env
-            - secretRef:
-                name: trakt-to-toggl-secret
+            - name: token-storage
+              mountPath: /app/data
             resources:
               requests:
-                memory: "32Mi"
+                memory: "128Mi"
                 cpu: "100m"
               limits:
-                memory: "128Mi"
+                memory: "256Mi"
                 cpu: "500m"
-          restartPolicy: Never
           volumes:
-          - name: trakt-tokens-volume
+          - name: token-storage
             secret:
-              secretName: trakt-tokens-secret
+              secretName: trakt-tokens
+              optional: true
+              defaultMode: 0600
