@@ -1,6 +1,6 @@
 [project]
 name = "trakt-toggl-sync"
-version = "1.0.0"
+version = "1.1.0"
 description = "Sync Trakt viewing history to Toggl with automatic deduplication"
 requires-python = ">=3.14"
 dependencies = [
