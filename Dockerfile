@@ -12,7 +12,7 @@ COPY pyproject.toml ./
 RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
-COPY src/sync.py ./
+COPY src/ ./src/
 
 # Create data directory
 RUN mkdir -p /app/data && chmod 700 /app/data
@@ -23,5 +23,6 @@ USER appuser
 
 # Unbuffer Python output
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 
-CMD ["python", "sync.py"]
+CMD ["python", "src/sync.py"]
