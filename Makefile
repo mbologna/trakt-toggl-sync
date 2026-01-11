@@ -135,11 +135,5 @@ k8s-status:
 	@kubectl get jobs -n trakt-toggl --sort-by=.metadata.creationTimestamp | tail -5
 
 k8s-delete:
-	@echo "Deleting Kubernetes resources..."
-	@read -p "Delete namespace trakt-toggl? (yes/no): " CONFIRM; \
-	if [ "$CONFIRM" = "yes" ]; then \
-		kubectl delete namespace trakt-toggl; \
-		echo "Deleted"; \
-	else \
-		echo "Cancelled"; \
-	fi
+	@kubectl delete namespace trakt-toggl
+	@echo "Deleted"
