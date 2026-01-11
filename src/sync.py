@@ -33,7 +33,10 @@ def load_json_file(file_path):
     """Load JSON data from file."""
     if os.path.exists(file_path):
         with open(file_path) as f:
-            return json.load(f)
+            content = f.read().strip()
+            if not content:  # Empty file
+                return None
+            return json.load(open(file_path))  # Re-open to parse properly
     return None
 
 
