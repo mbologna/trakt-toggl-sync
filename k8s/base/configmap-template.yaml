@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: trakt-to-toggl-env
-  namespace: trakt-to-toggl
+  name: trakt-toggl-config
+  namespace: trakt-toggl
 data:
-  TRAKT_CLIENT_ID: ""
-  TRAKT_HISTORY_DAYS: 7
-  TOGGL_WORKSPACE_ID: ""
-  TOGGL_PROJECT_ID: ""
-  TOGGL_TAGS: ""
+  TRAKT_HISTORY_DAYS: "7"
+  TOGGL_TAGS: "watching,entertainment"
+  # Update these values for your setup
+  TOGGL_WORKSPACE_ID: "YOUR_WORKSPACE_ID"
+  TOGGL_PROJECT_ID: "YOUR_PROJECT_ID"
