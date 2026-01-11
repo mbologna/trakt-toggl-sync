@@ -1,97 +1,175 @@
-# What is Trakt-to-Toggl?
+# trakt-toggl-sync
 
-This is a Python-based service designed to synchronize data from Trakt to Toggl.
-The service supports periodic execution using Kubernetes CronJobs and can also be run manually in a Python environment for development or testing purposes.
+> Automatically sync Trakt viewing history to Toggl for complete time tracking
 
-## Project Structure
+## Motivation
 
-- **`app/`**: Contains the Python application.
-  - `sync.py`: Main script for the synchronization logic.
-  - `requirements.txt`: Lists Python dependencies.
-  - `Dockerfile`: Defines how to build the container.
+I use Toggl for holistic time management—tracking work, projects, and personal activities. However, entertainment time was missing from this picture.
 
-- **`k8s/`**: Kubernetes configuration files.
-  - `base/`: Templates and base configuration for ConfigMaps and Secrets.
-  - `secrets/`: Sensitive data (excluded from Git) for production use.
+By syncing my Trakt viewing history to Toggl, I now have:
+- **Complete time tracking**: Work, hobbies, AND entertainment in one place
+- **Better insights**: Understand actual free time vs. perceived free time
+- **Accurate reporting**: No gaps in my daily timeline
+- **Effortless tracking**: No manual entry for movies and TV shows
 
-## Setup Instructions
+This bridges productivity tracking with leisure tracking for a truly comprehensive view of my time.
 
-### 1. Running Locally with Python
+## Features
 
-#### Prerequisites
+- ✅ Auto-deduplication (Trakt and Toggl)
+- ✅ Smart syncing with caching
+- ✅ Automatic token refresh
+- ✅ Graceful rate limit handling
+- ✅ Multiple deployment options (local, Docker, Kubernetes)
 
-- Python 3.8 or higher.
-- A virtual environment tool (e.g., `venv` or `virtualenv`).
+## Quick Start
 
-#### Steps
+```bash
+# Clone and setup
+git clone https://github.com/YOUR_USERNAME/trakt-toggl-sync.git
+cd trakt-toggl-sync
+cp .env.template .env
+# Edit .env with your API credentials
 
-1. Create and activate a virtual environment
+# Run locally
+make run
 
+# Or with Docker
+make docker-run
 ```
-python3 -m venv trakt-to-toggl
-source trakt-to-toggl/bin/activate
-```
 
-2. Install dependencies:
+## Prerequisites
 
-```
-pip install -r app/requirements.txt
-```
+**API Credentials:**
+- Trakt API: https://trakt.tv/oauth/applications
+- Toggl API: https://track.toggl.com/profile
 
-3. Set up environment variables: Create a .env file in the `app` directory and customize it with your keys and preferences:
+**Runtime:**
+- Python 3.14+ with [uv](https://github.com/astral-sh/uv)
+- Docker (optional)
+- Kubernetes (optional)
 
-```
-TRAKT_CLIENT_ID=<your_client_id>
-TRAKT_CLIENT_SECRET=<your_client_secret>
+## Configuration
+
+Edit `.env`:
+
+```env
+# Trakt
+TRAKT_CLIENT_ID=your_client_id
+TRAKT_CLIENT_SECRET=your_client_secret
 TRAKT_HISTORY_DAYS=7
-TOGGL_API_TOKEN=...
-TOGGL_WORKSPACE_ID=
-TOGGL_PROJECT_ID=
-TOGGL_TAGS=automated,trakt-to-toggl
+
+# Toggl
+TOGGL_API_TOKEN=your_api_token
+TOGGL_WORKSPACE_ID=your_workspace_id
+TOGGL_PROJECT_ID=your_project_id
+TOGGL_TAGS=watching,entertainment
 ```
 
-4. Run the script:
+## Usage
 
-```
-python app/sync.py
-```
+### Local Development
 
-Logs are provided on the standard output.
-
-### 2. Running in Kubernetes
-
-#### Steps
-
-1. Create Kubernetes namespace:
-
-```
-kubectl apply -f k8s/base/namespace.yaml
+```bash
+make install    # Install dependencies
+make run        # Run sync
+make test       # Run tests
+make lint       # Check code
+make format     # Format code
 ```
 
-2. Set up Secrets and ConfigMaps:
+### Docker
 
-Use the k8s/base/secret-template.yaml and k8s/base/configmap-template.yaml to create your Secrets and ConfigMaps.
-Apply them to the cluster:
+```bash
+# One-time setup for multi-platform builds
+make docker-setup
 
-```
-kubectl apply -f k8s/secrets/trakt_tokens_secret.yaml
-kubectl apply -f k8s/values/configmap-values.yaml
-```
+# Build for local architecture only
+make docker-build
 
-3. Deploy the CronJob:
+# Run locally
+make docker-run
 
-```
-kubectl apply -f k8s/base/cronjob.yaml
-```
-
-4. Test it with a manual run:
-
-```
-kubectl create job --from=cronjob/trakt-to-toggl trakt-to-toggl-manual-run
+# Build and push multi-platform (amd64 + arm64) to Docker Hub
+make docker-push
 ```
 
-5. Check the logs:
+### Kubernetes
+
+```bash
+# Setup secrets in k8s/secrets/
+make k8s-deploy      # Deploy
+make k8s-status      # Check status
+make k8s-logs        # View logs
+make k8s-manual      # Trigger manually
+```
+
+## How It Works
+
+1. **Deduplicate Trakt** - Removes duplicate watch history
+2. **Deduplicate Toggl** - Removes duplicate time entries
+3. **Sync** - Creates Toggl entries for recent Trakt history (default: 7 days)
+
+Rate limits are handled gracefully—if Toggl returns 402, deduplication is skipped and sync continues.
+
+## Example Output
 
 ```
-kubectl logs trakt-to-toggl-manual-run-...
+[2026-01-10 12:47:51] ===== Starting trakt-toggl-sync =====
+
+[2026-01-10 12:47:51] === Step 1: Removing Trakt Duplicates ===
+[2026-01-10 12:47:52] Found 6 duplicate entries
+[2026-01-10 12:47:52] ✓ Successfully removed 6 duplicates
+
+[2026-01-10 12:47:53] === Step 2: Removing Toggl Duplicates ===
+[2026-01-10 12:47:53] ⚠ Toggl rate limit reached. Skipping deduplication.
+
+[2026-01-10 12:47:54] === Step 3: Syncing Trakt to Toggl ===
+[2026-01-10 12:47:55] ✓ Created: 📺 The Office - S03E15 (at 2025-12-30 20:00)
+[2026-01-10 12:47:56] Skipped (exists): 🎞️ Inception (2010)
+
+[2026-01-10 12:48:00] ===== Sync Complete =====
 ```
+
+## Development
+
+```bash
+# Lint and format
+make check
+
+# Run tests with coverage
+make test-cov
+
+# Clean cache
+make clean
+```
+
+## CI/CD
+
+GitHub Actions automatically:
+- Lints with Ruff
+- Runs tests on Python 3.14
+- Builds multi-platform Docker images
+- Pushes to Docker Hub (on main branch)
+
+## Troubleshooting
+
+**Rate Limiting (402 Error)**
+- Handled gracefully—sync continues
+- Deduplication skipped temporarily
+- Try again in a few minutes
+
+**Token Expired**
+```bash
+rm .trakt_tokens.json
+make run  # Re-authenticate
+```
+
+**No Entries Syncing**
+- Verify `TOGGL_PROJECT_ID`
+- Check logs for "Skipped (exists)"
+- Adjust `TRAKT_HISTORY_DAYS`
+
+## License
+
+See [LICENSE](LICENSE)
