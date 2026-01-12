@@ -147,6 +147,8 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      security-events: write
+      actions: read
 
     steps:
       - uses: actions/checkout@v4
