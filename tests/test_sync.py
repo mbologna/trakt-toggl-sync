@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -105,11 +106,11 @@ class TestTogglAPI:
     def test_entry_exists_with_rate_limit(self):
         """Test entry_exists returns True when rate limited."""
         api = TogglAPI("token", 123, 456, ["tag"])
-        api._rate_limited = True
-        api._cached_entries = None
 
-        result = api.entry_exists("Test", "2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z")
-        assert result is True
+        # Mock the get_cached_entries to return None (simulating rate limit)
+        with patch.object(api, "get_cached_entries", return_value=None):
+            result = api.entry_exists("Test", "2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z")
+            assert result is True
 
 
 if __name__ == "__main__":
