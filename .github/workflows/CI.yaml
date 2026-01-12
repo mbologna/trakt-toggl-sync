@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 env:
-  REGISTRY_IMAGE: ${{ secrets.DOCKER_USERNAME }}/trakt-toggl-sync
+  REGISTRY_IMAGE_DOCKERHUB: ${{ secrets.DOCKER_USERNAME }}/trakt-toggl-sync
+  REGISTRY_IMAGE_GHCR: ghcr.io/${{ github.repository_owner }}/trakt-toggl-sync
 
 jobs:
   lint:
@@ -34,10 +35,6 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.14"]
-
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +43,8 @@ jobs:
         with:
           version: "latest"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python 3.14
+        run: uv python install 3.14
 
       - name: Install dependencies
         run: uv sync --all-groups
@@ -65,7 +62,17 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [lint, test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    # 🔐 owner-only, main-only, push-only
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository_owner == github.actor
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # 🔑 required for Cosign + SLSA
 
     steps:
       - uses: actions/checkout@v4
@@ -79,8 +86,8 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Log into registry
-        uses: docker/login-action@v2
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -90,13 +97,19 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY_IMAGE }}
+          images: |
+            ${{ env.REGISTRY_IMAGE_DOCKERHUB }}
+            ${{ env.REGISTRY_IMAGE_GHCR }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=main-
+            type=raw,value=latest
 
-      - name: Build and push
+      # ------------------------------
+      # 1️⃣ BUILD #1 (reference build)
+      # ------------------------------
+      - name: Build & push (SBOM + SLSA)
+        id: build1
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -106,3 +119,63 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          sbom: true
+          provenance: true
+
+      # ------------------------------
+      # 2️⃣ BUILD #2 (Repro Check - AMD64 Only)
+      # ------------------------------
+      # We build only AMD64 here because we need to 'load' it into the
+      # runner's Docker daemon to inspect the internal layers.
+      - name: Rebuild image (repro check)
+        id: build2
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          # ⚠️ Force single architecture for comparison
+          platforms: linux/amd64
+          # ⚠️ Load into local Docker daemon instead of just writing to disk
+          load: true
+          tags: repro-test:latest
+          cache-from: type=gha
+          provenance: false
+          sbom: false
+
+     # ------------------------------
+      # 🔍 REPRODUCIBILITY CHECK
+      # ------------------------------
+      - name: Verify reproducible build
+        run: |
+          # 1. Pull the specific platform image we just pushed in Build #1
+          docker pull --platform linux/amd64 ${{ env.REGISTRY_IMAGE_GHCR }}:latest
+
+          # 2. Extract RootFS (Uncompressed Layer Hashes)
+          # Use " " around the format string to prevent shell expansion issues
+          REMOTE_LAYERS=$(docker inspect ${{ env.REGISTRY_IMAGE_GHCR }}:latest --format='{{.RootFS}}')
+          LOCAL_LAYERS=$(docker inspect repro-test:latest --format='{{.RootFS}}')
+
+          echo "Remote Layers: $REMOTE_LAYERS"
+          echo "Local Layers:  $LOCAL_LAYERS"
+
+          # 3. Compare as strings
+          if [ "$REMOTE_LAYERS" = "$LOCAL_LAYERS" ]; then
+            echo "✅ Build is reproducible (Content matches)"
+          else
+            echo "❌ Build is NOT reproducible (Layer content mismatch)"
+            exit 1
+          fi
+      # ------------------------------
+      # 🔏 COSIGN KEYLESS SIGNING
+      # ------------------------------
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images with Cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          for image in \
+            "${{ env.REGISTRY_IMAGE_DOCKERHUB }}" \
+            "${{ env.REGISTRY_IMAGE_GHCR }}"; do
+            cosign sign --yes ${image}@${{ steps.build1.outputs.digest }}
+          done
