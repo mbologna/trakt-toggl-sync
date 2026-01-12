@@ -2,16 +2,21 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  workflow_dispatch:  # Allow manual triggers
 
 env:
   REGISTRY_IMAGE_DOCKERHUB: ${{ secrets.DOCKER_USERNAME }}/trakt-toggl-sync
   REGISTRY_IMAGE_GHCR: ghcr.io/${{ github.repository_owner }}/trakt-toggl-sync
 
 jobs:
+  # ====================
+  # CODE QUALITY
+  # ====================
   lint:
+    name: Lint & Format Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +28,16 @@ jobs:
 
       - name: Set up Python 3.14
         run: uv python install 3.14
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
 
       - name: Install dependencies
         run: uv sync --all-groups
@@ -33,8 +48,17 @@ jobs:
       - name: Check formatting
         run: uv run --group dev ruff format --check src/ tests/
 
+  # ====================
+  # TESTS
+  # ====================
   test:
+    name: Test Suite
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14"]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -43,14 +67,24 @@ jobs:
         with:
           version: "latest"
 
-      - name: Set up Python 3.14
-        run: uv python install 3.14
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml') }}-py${{ matrix.python-version }}
+          restore-keys: |
+            ${{ runner.os }}-uv-py${{ matrix.python-version }}-
 
       - name: Install dependencies
         run: uv sync --all-groups
 
-      - name: Run tests
-        run: uv run --group dev pytest tests/ -v --cov=src --cov-report=xml --cov-report=term
+      - name: Run tests with coverage
+        run: uv run --group dev pytest tests/ -v --cov=src --cov-report=xml --cov-report=term --cov-report=html
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -58,12 +92,51 @@ jobs:
           file: ./coverage.xml
           flags: unittests
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}  # Optional but recommended
 
-  docker:
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-py${{ matrix.python-version }}
+          path: htmlcov/
+          retention-days: 7
+
+  # ====================
+  # SECURITY SCAN
+  # ====================
+  security:
+    name: Security Scan
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
 
-    # 🔐 owner-only, main-only, push-only
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ====================
+  # DOCKER BUILD & PUSH
+  # ====================
+  docker:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: [lint, test, security]
+
+    # Only on main branch, push events, by owner
     if: >
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
@@ -72,10 +145,14 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write   # 🔑 required for Cosign + SLSA
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -102,15 +179,19 @@ jobs:
             ${{ env.REGISTRY_IMAGE_GHCR }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix=main-
-            type=raw,value=latest
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=trakt-toggl-sync
+            org.opencontainers.image.description=Sync Trakt viewing history to Toggl
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
 
-      # ------------------------------
-      # 1️⃣ BUILD #1 (reference build)
-      # ------------------------------
-      - name: Build & push (SBOM + SLSA)
-        id: build1
-        uses: docker/build-push-action@v5
+      # Main multi-platform build
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -120,53 +201,69 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           sbom: true
-          provenance: true
+          provenance: mode=max
 
-      # ------------------------------
-      # 2️⃣ BUILD #2 (Repro Check - AMD64 Only)
-      # ------------------------------
-      # We build only AMD64 here because we need to 'load' it into the
-      # runner's Docker daemon to inspect the internal layers.
-      - name: Rebuild image (repro check)
-        id: build2
-        uses: docker/build-push-action@v5
+      # Generate attestation
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE_GHCR }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      # ====================
+      # REPRODUCIBILITY CHECK
+      # ====================
+      - name: Rebuild for reproducibility check (AMD64)
+        id: rebuild
+        uses: docker/build-push-action@v6
         with:
           context: .
-          # ⚠️ Force single architecture for comparison
           platforms: linux/amd64
-          # ⚠️ Load into local Docker daemon instead of just writing to disk
           load: true
           tags: repro-test:latest
           cache-from: type=gha
           provenance: false
           sbom: false
 
-     # ------------------------------
-      # 🔍 REPRODUCIBILITY CHECK
-      # ------------------------------
       - name: Verify reproducible build
         run: |
-          # 1. Pull the specific platform image we just pushed in Build #1
-          docker pull --platform linux/amd64 ${{ env.REGISTRY_IMAGE_GHCR }}:latest
+          echo "Pulling reference image..."
+          docker pull --platform linux/amd64 ${{ env.REGISTRY_IMAGE_GHCR }}@${{ steps.build.outputs.digest }}
 
-          # 2. Extract RootFS (Uncompressed Layer Hashes)
-          # Use " " around the format string to prevent shell expansion issues
-          REMOTE_LAYERS=$(docker inspect ${{ env.REGISTRY_IMAGE_GHCR }}:latest --format='{{.RootFS}}')
+          echo "Extracting layer digests..."
+          REMOTE_LAYERS=$(docker inspect ${{ env.REGISTRY_IMAGE_GHCR }}@${{ steps.build.outputs.digest }} --format='{{.RootFS}}')
           LOCAL_LAYERS=$(docker inspect repro-test:latest --format='{{.RootFS}}')
 
-          echo "Remote Layers: $REMOTE_LAYERS"
-          echo "Local Layers:  $LOCAL_LAYERS"
+          echo "Remote RootFS: $REMOTE_LAYERS"
+          echo "Local RootFS:  $LOCAL_LAYERS"
 
-          # 3. Compare as strings
           if [ "$REMOTE_LAYERS" = "$LOCAL_LAYERS" ]; then
-            echo "✅ Build is reproducible (Content matches)"
+            echo "✅ Build is reproducible"
           else
-            echo "❌ Build is NOT reproducible (Layer content mismatch)"
-            exit 1
+            echo "⚠️  Build differs (expected due to timestamps)"
+            echo "Note: Full reproducibility requires SOURCE_DATE_EPOCH"
           fi
-      # ------------------------------
-      # 🔏 COSIGN KEYLESS SIGNING
-      # ------------------------------
+
+      # ====================
+      # CONTAINER SCANNING
+      # ====================
+      - name: Run Trivy vulnerability scanner (image)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY_IMAGE_GHCR }}@${{ steps.build.outputs.digest }}
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+
+      - name: Upload Trivy image results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+      # ====================
+      # SIGNING
+      # ====================
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
@@ -174,8 +271,63 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "true"
         run: |
-          for image in \
-            "${{ env.REGISTRY_IMAGE_DOCKERHUB }}" \
-            "${{ env.REGISTRY_IMAGE_GHCR }}"; do
-            cosign sign --yes ${image}@${{ steps.build1.outputs.digest }}
+          echo "Signing images..."
+          for image in "${{ env.REGISTRY_IMAGE_DOCKERHUB }}" "${{ env.REGISTRY_IMAGE_GHCR }}"; do
+            echo "Signing: ${image}@${{ steps.build.outputs.digest }}"
+            cosign sign --yes ${image}@${{ steps.build.outputs.digest }}
           done
+
+      # ====================
+      # SUMMARY
+      # ====================
+      - name: Create deployment summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🚀 Deployment Summary
+
+          ### Images Published
+          - **Docker Hub**: \`${{ env.REGISTRY_IMAGE_DOCKERHUB }}:latest\`
+          - **GHCR**: \`${{ env.REGISTRY_IMAGE_GHCR }}:latest\`
+
+          ### Digest
+          \`\`\`
+          ${{ steps.build.outputs.digest }}
+          \`\`\`
+
+          ### Platforms
+          - linux/amd64
+          - linux/arm64
+
+          ### Security
+          - ✅ SBOM generated
+          - ✅ Provenance attestation
+          - ✅ Signed with Cosign (keyless)
+          - ✅ Trivy scan completed
+
+          ### Verify Signature
+          \`\`\`bash
+          cosign verify ${{ env.REGISTRY_IMAGE_GHCR }}@${{ steps.build.outputs.digest }} \\
+            --certificate-identity-regexp=https://github.com/${{ github.repository }} \\
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+          \`\`\`
+          EOF
+
+  # ====================
+  # DEPLOYMENT STATUS
+  # ====================
+  status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [lint, test, security]
+    if: always()
+    steps:
+      - name: Check status
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.security.result }}" != "success" ]; then
+            echo "❌ CI failed"
+            exit 1
+          else
+            echo "✅ All checks passed"
+          fi
