@@ -22,122 +22,15 @@ This bridges productivity tracking with leisure tracking for a truly comprehensi
 - ✅ Graceful rate limit handling
 - ✅ Multiple deployment options (local, Docker, Kubernetes)
 
-## Quick Start
-
-```bash
-# Clone and setup
-git clone https://github.com/YOUR_USERNAME/trakt-toggl-sync.git
-cd trakt-toggl-sync
-cp .env.template .env
-# Edit .env with your API credentials
-
-# Run locally
-make run
-
-# Or with Docker
-make docker-run
-```
-
-## Prerequisites
-
-**API Credentials:**
-- Trakt API: https://trakt.tv/oauth/applications
-- Toggl API: https://track.toggl.com/profile
-
-**Runtime:**
-- Python 3.14+ with [uv](https://github.com/astral-sh/uv)
-- Docker (optional)
-- Kubernetes (optional)
-
-## Configuration
-
-Edit `.env`:
-
-```env
-# Trakt
-TRAKT_CLIENT_ID=your_client_id
-TRAKT_CLIENT_SECRET=your_client_secret
-TRAKT_HISTORY_DAYS=7
-
-# Toggl
-TOGGL_API_TOKEN=your_api_token
-TOGGL_WORKSPACE_ID=your_workspace_id
-TOGGL_PROJECT_ID=your_project_id
-TOGGL_TAGS=watching,entertainment
-```
-
-## Usage
-
-### Local Development
-
-```bash
-make install    # Install dependencies
-make run        # Run sync
-make test       # Run tests
-make lint       # Check code
-make format     # Format code
-```
-
-### Docker
-
-```bash
-# One-time setup for multi-platform builds
-make docker-setup
-
-# Build for local architecture
-make docker-build
-
-# Run locally
-make docker-run
-
-# Build and push multi-platform (amd64 + arm64) to Docker Hub
-make docker-push
-```
-
-### Kubernetes
-
-**Important: Authenticate locally before deploying to K8s**
-
-```bash
-# Step 1: Run locally to authenticate with Trakt
-make run
-# Complete the browser authentication - this creates .trakt_tokens.json
-
-# Step 2: Create namespace
-kubectl create namespace trakt-toggl
-
-# Step 3: Create token secret from your local token file
-kubectl create secret generic trakt-tokens \
-  --from-file=.trakt_tokens.json=.trakt_tokens.json \
-  --namespace=trakt-toggl
-
-# Step 4: Setup other secrets
-cp k8s/base/configmap-template.yaml k8s/secrets/configmap.yaml
-cp k8s/base/secret-template.yaml k8s/secrets/secret.yaml
-# Edit k8s/secrets/*.yaml with your values
-
-# Step 5: Apply secrets
-kubectl apply -f k8s/secrets/configmap.yaml
-kubectl apply -f k8s/secrets/secret.yaml
-
-# Step 6: Deploy CronJob
-kubectl apply -f k8s/base/cronjob.yaml
-
-# Step 7: Verify
-make k8s-status
-make k8s-logs
-
-# Manually trigger a sync
-make k8s-manual
-```
-
 ## How It Works
 
-1. **Deduplicate Trakt** - Removes duplicate watch history
+1. **Deduplicate Trakt** - Removes duplicate watch history entries
 2. **Deduplicate Toggl** - Removes duplicate time entries
 3. **Sync** - Creates Toggl entries for recent Trakt history (default: 7 days)
 
 Rate limits are handled gracefully—if Toggl returns 402, deduplication is skipped and sync continues.
+
+The Kubernetes CronJob automatically refreshes OAuth tokens before they expire, ensuring uninterrupted syncing.
 
 ## Example Output
 
@@ -158,37 +51,200 @@ Rate limits are handled gracefully—if Toggl returns 402, deduplication is skip
 [2026-01-10 12:48:00] ===== Sync Complete =====
 ```
 
-## Development
+## Prerequisites
+
+**API Credentials:**
+- Trakt API: https://trakt.tv/oauth/applications
+- Toggl API: https://track.toggl.com/profile
+
+**Runtime:**
+- Python 3.14+ with [uv](https://github.com/astral-sh/uv)
+- Docker (optional)
+- Kubernetes (optional)
+
+## Usage
+
+## Quick Start
 
 ```bash
-# Lint and format
-make check
+# Clone and setup
+git clone https://github.com/YOUR_USERNAME/trakt-toggl-sync.git
+cd trakt-toggl-sync
+cp .env.template .env
+# Edit .env with your API credentials
 
-# Run tests with coverage
-make test-cov
+# Run locally
+make run
 
-# Clean cache
-make clean
+# Or with Docker
+make docker-run
 ```
+
+## Configuration
+
+Edit `.env`:
+
+```env
+# Trakt
+TRAKT_CLIENT_ID=your_client_id
+TRAKT_CLIENT_SECRET=your_client_secret
+TRAKT_HISTORY_DAYS=7
+
+# Toggl
+TOGGL_API_TOKEN=your_api_token
+TOGGL_WORKSPACE_ID=your_workspace_id
+TOGGL_PROJECT_ID=your_project_id
+TOGGL_TAGS=watching,entertainment
+```
+
+## Docker
+
+```bash
+# One-time setup for multi-platform builds
+make docker-setup
+
+# Build for local architecture
+make docker-build
+
+# Run locally
+make docker-run
+
+# Build and push multi-platform (amd64 + arm64) to Docker Hub
+make docker-push
+```
+
+## Kubernetes
+
+### Initial Setup
+
+**Step 1: Prepare Kubernetes configuration**
+
+```bash
+# Create namespace
+kubectl apply -f k8s/base/namespace.yaml
+
+# Copy and edit configuration templates
+cp k8s/base/configmap-template.yaml k8s/secrets/configmap.yaml
+cp k8s/base/secret-template.yaml k8s/secrets/secret.yaml
+
+# Edit k8s/configmap.yaml with your Toggl IDs
+# Edit k8s/secret.yaml with base64-encoded API credentials:
+echo -n "your_trakt_client_id" | base64
+echo -n "your_trakt_client_secret" | base64
+echo -n "your_toggl_api_token" | base64
+```
+
+**Step 2: Deploy to Kubernetes**
+
+```bash
+# Apply PersistentVolumeClaim for token storage
+kubectl apply -f k8s/base/pvc.yaml
+
+# Apply configuration and secrets
+kubectl apply -f k8s/secrets/configmap.yaml
+kubectl apply -f k8s/secrets/secret.yaml
+
+# Deploy the CronJob
+kubectl apply -f k8s/base/cronjob.yaml
+```
+
+**Step 3: Initial token setup (first time only)**
+
+Since the CronJob won't have authentication tokens yet, you have to manually trigger the first job and authenticate interactively:
+
+```bash
+# Create a one-time job from the cronjob
+kubectl create job --from=cronjob/trakt-toggl-sync trakt-sync-initial -n trakt-toggl
+
+# Watch the logs
+kubectl logs -f job/trakt-sync-initial -n trakt-toggl
+
+# Follow the authentication URL shown in the logs
+# Once authenticated, the token will be saved to the PVC
+```
+
+### Automation via CronJob
+
+The Kubernetes deployment uses a CronJob that runs every 6 hours with persistent storage for Trakt OAuth tokens.
+
+### Management Commands
+
+```bash
+# Check CronJob status
+kubectl get cronjob -n trakt-toggl
+
+# View recent job runs
+kubectl get jobs -n trakt-toggl
+
+# View logs from latest run
+kubectl logs -l app=trakt-toggl-sync -n trakt-toggl --tail=100
+
+# Manually trigger a sync
+kubectl create job --from=cronjob/trakt-toggl-sync trakt-sync-manual-$(date +%s) -n trakt-toggl
+
+# Check PVC status
+kubectl get pvc -n trakt-toggl
+
+# Delete everything
+kubectl delete namespace trakt-toggl
+```
+
+## Storage Configuration
+
+The deployment uses a PersistentVolumeClaim (PVC) to store Trakt OAuth tokens. By default, it requests 3Mi of storage.
 
 ## Troubleshooting
 
-**Rate Limiting (402 Error)**
+### Rate Limiting (402 Error)
 - Handled gracefully—sync continues
 - Deduplication skipped temporarily
 - Try again in a few minutes
 
-**Token Expired**
+### Token Expired
 ```bash
+# Local
 rm .trakt_tokens.json
 make run  # Re-authenticate
+
+# Kubernetes
+kubectl delete pvc trakt-tokens-pvc -n trakt-toggl
+kubectl apply -f k8s/pvc.yaml
+# Then follow Step 4 again to re-authenticate
 ```
 
-**No Entries Syncing**
-- Verify `TOGGL_PROJECT_ID`
-- Check logs for "Skipped (exists)"
-- Adjust `TRAKT_HISTORY_DAYS`
+### No Entries Syncing
+- Verify `TOGGL_PROJECT_ID` is correct
+- Check logs for "Skipped (exists)" messages
+- Adjust `TRAKT_HISTORY_DAYS` to sync more history
+- Ensure entries exist in Trakt for the specified time period
 
-## License
+### Kubernetes Pod Crashes
+```bash
+# Check pod logs
+kubectl logs -l app=trakt-toggl-sync -n trakt-toggl
 
-See [LICENSE](LICENSE)
+# Check pod events
+kubectl describe pod -l app=trakt-toggl-sync -n trakt-toggl
+
+# Verify secrets are created correctly
+kubectl get secrets -n trakt-toggl
+kubectl describe secret trakt-toggl-credentials -n trakt-toggl
+```
+
+### PVC Not Mounting
+- Verify your cluster has a storage provisioner installed
+- Check available storage classes: `kubectl get storageclass`
+- Update `k8s/pvc.yaml` with your cluster's storage class
+
+## Development
+
+```bash
+make install    # Install dependencies
+make run        # Run sync
+make test       # Run tests
+make lint       # Check code
+make format     # Format code
+make check      # Lint and format
+make test-cov   # Run tests with coverage
+make clean      # Clean cache
+```
