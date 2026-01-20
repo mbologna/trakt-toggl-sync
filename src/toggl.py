@@ -36,7 +36,7 @@ class TogglAPI:
         """Normalize timestamps for comparison."""
         return datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")).replace(microsecond=0)
 
-    def get_cached_entries(self, force_refresh=False):
+    def get_cached_entries(self, start_date=None, force_refresh=False):
         """Get cached Toggl entries or fetch if cache is stale."""
         now = time.time()
         if (
@@ -46,8 +46,15 @@ class TogglAPI:
             or now - self._cache_timestamp > self._cache_duration
         ):
             try:
+                # Fetch entries with date range if provided
+                params = {}
+                if start_date:
+                    params["start_date"] = start_date
+                    params["end_date"] = datetime.now().strftime("%Y-%m-%d")
+
                 response = requests.get(
                     f"{self.BASE_URL}/me/time_entries",
+                    params=params,
                     auth=(self.api_token, "api_token"),
                 )
                 response.raise_for_status()
@@ -127,7 +134,7 @@ class TogglAPI:
             self._cached_entries = None
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 402:
-                print(f"[{timestamp()}] ⚠ Rate limit on creation. Stopping sync.")
+                print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
                 self._rate_limited = True
                 # Re-raise to stop the sync process
                 raise

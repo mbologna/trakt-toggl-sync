@@ -83,6 +83,10 @@ def main():
     start_date = (datetime.now() - timedelta(days=TRAKT_HISTORY_DAYS)).isoformat() + "Z"
     history = trakt.fetch_history(tokens["access_token"], start_date)
 
+    # Pre-fetch Toggl entries for the same date range to improve duplicate detection
+    start_date_str = (datetime.now() - timedelta(days=TRAKT_HISTORY_DAYS)).strftime("%Y-%m-%d")
+    toggl.get_cached_entries(start_date=start_date_str, force_refresh=True)
+
     print(f"[{timestamp()}] Processing {len(history)} entries...")
     try:
         for item in history:
@@ -91,6 +95,8 @@ def main():
         if e.response.status_code == 402:
             print(f"[{timestamp()}] ⚠ Sync stopped due to rate limits.")
             print(f"[{timestamp()}] Run again later to sync remaining entries.")
+        else:
+            raise
 
     print(f"\n[{timestamp()}] ===== Sync Complete =====")
 
