@@ -83,7 +83,5 @@ spec:
                 cpu: "500m"
           volumes:
           - name: token-storage
-            secret:
-              secretName: trakt-tokens
-              optional: true
-              defaultMode: 0600
+            persistentVolumeClaim:
+              claimName: trakt-tokens-pvc
