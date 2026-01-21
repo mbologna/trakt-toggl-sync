@@ -64,7 +64,7 @@ The Kubernetes CronJob automatically refreshes OAuth tokens before they expire, 
 
 ## Usage
 
-## Quick Start
+### Quick Start
 
 ```bash
 # Clone and setup
@@ -80,7 +80,7 @@ make run
 make docker-run
 ```
 
-## Configuration
+### Configuration
 
 Edit `.env`:
 
@@ -97,7 +97,7 @@ TOGGL_PROJECT_ID=your_project_id
 TOGGL_TAGS=watching,entertainment
 ```
 
-## Docker
+### Docker
 
 ```bash
 # One-time setup for multi-platform builds
@@ -113,9 +113,11 @@ make docker-run
 make docker-push
 ```
 
-## Kubernetes
+### Kubernetes
 
-### Initial Setup
+The Kubernetes deployment uses a CronJob that runs every 6 hours with persistent storage for Trakt OAuth tokens.
+
+#### Initial Setup
 
 **Step 1: Prepare Kubernetes configuration**
 
@@ -127,8 +129,8 @@ kubectl apply -f k8s/base/namespace.yaml
 cp k8s/base/configmap-template.yaml k8s/secrets/configmap.yaml
 cp k8s/base/secret-template.yaml k8s/secrets/secret.yaml
 
-# Edit k8s/configmap.yaml with your Toggl IDs
-# Edit k8s/secret.yaml with base64-encoded API credentials:
+# Edit k8s/secrets/configmap.yaml with your Toggl IDs
+# Edit k8s/secrets/secret.yaml with base64-encoded API credentials:
 echo -n "your_trakt_client_id" | base64
 echo -n "your_trakt_client_secret" | base64
 echo -n "your_toggl_api_token" | base64
@@ -163,11 +165,11 @@ kubectl logs -f job/trakt-sync-initial -n trakt-toggl
 # Once authenticated, the token will be saved to the PVC
 ```
 
-### Automation via CronJob
+#### Automation via CronJob
 
 The Kubernetes deployment uses a CronJob that runs every 6 hours with persistent storage for Trakt OAuth tokens.
 
-### Management Commands
+##### Management Commands
 
 ```bash
 # Check CronJob status
@@ -189,7 +191,7 @@ kubectl get pvc -n trakt-toggl
 kubectl delete namespace trakt-toggl
 ```
 
-## Storage Configuration
+#### Storage Configuration
 
 The deployment uses a PersistentVolumeClaim (PVC) to store Trakt OAuth tokens. By default, it requests 3Mi of storage.
 
@@ -248,3 +250,53 @@ make check      # Lint and format
 make test-cov   # Run tests with coverage
 make clean      # Clean cache
 ```
+
+### End-to-End Testing
+
+The project includes comprehensive E2E tests that verify integration with real Trakt and Toggl APIs.
+
+**Setup E2E Tests:**
+
+```bash
+# 1. Authenticate with Trakt (creates .trakt_tokens.json)
+make run
+
+# 2. Get setup instructions
+make test-e2e-setup
+
+# 3. Export the environment variables shown (example):
+export E2E_TRAKT_CLIENT_ID="your_client_id"
+export E2E_TRAKT_CLIENT_SECRET="your_client_secret"
+export E2E_TRAKT_ACCESS_TOKEN="token_from_json"
+export E2E_TRAKT_REFRESH_TOKEN="token_from_json"
+export E2E_TOGGL_API_TOKEN="your_api_token"
+export E2E_TOGGL_WORKSPACE_ID="123456"
+export E2E_TOGGL_PROJECT_ID="789012"
+export E2E_TEST_ENABLED=true
+
+# 4. Run E2E tests
+make test-e2e
+```
+
+**Note:** E2E tests will create temporary test entries in your Toggl project. These are tagged with `e2e-test` and should be cleaned up manually.
+
+### Pre-commit Hooks
+
+Install pre-commit hooks to automatically check code quality before commits:
+
+```bash
+make pre-commit-install
+
+# Run hooks manually
+make pre-commit-run
+
+# Update hooks to latest versions
+make pre-commit-update
+```
+
+Hooks include:
+- Ruff linting and formatting
+- YAML/TOML syntax checking
+- Trailing whitespace removal
+- Security vulnerability scanning (Bandit)
+- Docstring validation
