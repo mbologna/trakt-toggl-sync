@@ -48,6 +48,10 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --strict-markers"
+markers = [
+    "e2e: End-to-end tests that require API credentials",
+]
+
 [tool.bandit]
 exclude_dirs = ["tests"]
 skips = ["B101"]  # Skip assert_used check (needed for tests)
