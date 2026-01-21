@@ -8,6 +8,8 @@ help:
 	@echo "  make run                Run the sync script"
 	@echo "  make test               Run unit tests"
 	@echo "  make test-cov           Run tests with coverage"
+	@echo "  make test-e2e           Run end-to-end tests (requires setup)"
+	@echo "  make test-e2e-setup     Show E2E test setup instructions"
 	@echo "  make lint               Run linter (ruff check)"
 	@echo "  make format             Format code (ruff format)"
 	@echo "  make check              Run lint + format check"
@@ -44,13 +46,33 @@ run:
 	cd src && uv run python -u sync.py
 
 test:
-	@echo "Running tests..."
-	uv run --group dev pytest tests/ -v
+	@echo "Running unit tests..."
+	uv run --group dev pytest tests/ -v --ignore=tests/test_e2e.py
 
 test-cov:
 	@echo "Running tests with coverage..."
-	uv run --group dev pytest tests/ -v --cov=src --cov-report=html --cov-report=term
-	@echo "Coverage report: htmlcov/index.html"
+	uv run --group dev pytest tests/ -v --ignore=tests/test_e2e.py --cov=src --cov-report=html --cov-report=term
+	@echo ""
+	@echo "✓ Coverage report: htmlcov/index.html"
+
+test-e2e:
+	@echo "Running end-to-end tests..."
+	@if [ "$(E2E_TEST_ENABLED)" != "true" ]; then \
+		echo "⚠ E2E tests are disabled. Set E2E_TEST_ENABLED=true to run them."; \
+		echo ""; \
+		echo "Setup instructions:"; \
+		echo "  1. Run: make run (to authenticate with Trakt)"; \
+		echo "  2. Run: bash scripts/setup-e2e.sh (to get env vars)"; \
+		echo "  3. Export the variables shown"; \
+		echo "  4. Run: make test-e2e"; \
+		echo ""; \
+		exit 1; \
+	fi
+	PYTHONUNBUFFERED=1 uv run --group dev pytest -c tests/pytest.e2e.ini tests/test_e2e.py
+
+test-e2e-setup:
+	@echo "Setting up E2E test environment..."
+	@bash scripts/setup-e2e.sh
 
 lint:
 	@echo "Running linter..."

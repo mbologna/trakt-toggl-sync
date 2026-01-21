@@ -4,13 +4,22 @@ __pycache__/
 *$py.class
 *.so
 .Python
+eggs/
+.eggs/
 *.egg-info/
 dist/
 build/
 *.egg
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.nox/
+.ruff_cache/
+.tox/
+pip-wheel-metadata/
+share/python-wheels/
+wheels/
 
 # Virtual environments
 .venv/
