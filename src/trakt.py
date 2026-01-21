@@ -1,6 +1,7 @@
 """Trakt API client for managing viewing history."""
 
 import os
+import sys
 import time
 from datetime import datetime, timedelta
 
@@ -13,6 +14,7 @@ class TraktAPI:
     """Trakt API client for managing viewing history."""
 
     BASE_URL = "https://api.trakt.tv"
+    DEFAULT_TIMEOUT = (3.05, 10)
 
     def __init__(self, client_id, client_secret, token_file):
         self.client_id = client_id
@@ -43,28 +45,34 @@ class TraktAPI:
             f"{self.BASE_URL}/oauth/device/code",
             json={"client_id": self.client_id},
             headers=self._get_headers(),
+            timeout=self.DEFAULT_TIMEOUT,
         )
         response.raise_for_status()
         device_data = response.json()
 
         print(f"[{timestamp()}] Visit {device_data['verification_url']} and enter the code: {device_data['user_code']}")
+        sys.stdout.flush()
 
         while True:
             time.sleep(device_data["interval"])
             response = requests.post(
                 f"{self.BASE_URL}/oauth/device/token",
                 json={"client_id": self.client_id, "code": device_data["device_code"]},
+                timeout=self.DEFAULT_TIMEOUT,
             )
             if response.status_code == 200:
                 tokens = response.json()
                 tokens["expires_at"] = (datetime.now() + timedelta(seconds=tokens["expires_in"])).isoformat()
                 save_json_file(self.token_file, tokens)
                 print(f"[{timestamp()}] Authentication successful!")
+                sys.stdout.flush()
                 return tokens
             elif response.status_code in {400, 404, 410, 418, 429}:
                 print(f"[{timestamp()}] Waiting for user authentication...")
+                sys.stdout.flush()
             else:
                 print(f"[{timestamp()}] Authentication failed: {response.status_code}")
+                sys.stdout.flush()
                 break
         raise RuntimeError(f"[{timestamp()}] Authentication failed.")
 
@@ -79,16 +87,19 @@ class TraktAPI:
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
                 },
+                timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
             tokens = response.json()
             tokens["expires_at"] = (datetime.now() + timedelta(seconds=tokens["expires_in"])).isoformat()
             save_json_file(self.token_file, tokens)
             print(f"[{timestamp()}] Token refreshed successfully!")
+            sys.stdout.flush()
             return tokens
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 400:
                 print(f"[{timestamp()}] Refresh token expired. Re-authenticating...")
+                sys.stdout.flush()
                 if os.path.exists(self.token_file):
                     os.remove(self.token_file)
                 return self.authenticate()
@@ -102,11 +113,13 @@ class TraktAPI:
         page = 1
 
         print(f"[{timestamp()}] Fetching complete Trakt history...")
+        sys.stdout.flush()
         while True:
             response = requests.get(
                 f"{self.BASE_URL}/sync/history",
                 headers=headers,
                 params={"page": page, "limit": 1000},
+                timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
             data = response.json()
@@ -116,6 +129,7 @@ class TraktAPI:
             page += 1
 
         print(f"[{timestamp()}] Fetched {len(history)} total Trakt history entries")
+        sys.stdout.flush()
         return history
 
     def fetch_history(self, access_token, start_date):
@@ -129,6 +143,7 @@ class TraktAPI:
                 f"{self.BASE_URL}/sync/history?extended=full",
                 headers=headers,
                 params={"start_at": start_date, "page": page, "limit": 100},
+                timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
             data = response.json()
@@ -153,6 +168,7 @@ class TraktAPI:
     def remove_duplicates(self, access_token):
         """Remove duplicate entries from Trakt history, keeping most recent."""
         print(f"[{timestamp()}] Starting Trakt deduplication...")
+        sys.stdout.flush()
         history = self.fetch_full_history(access_token)
 
         unique_items = {}
@@ -174,17 +190,24 @@ class TraktAPI:
 
         if duplicates:
             print(f"[{timestamp()}] Found {len(duplicates)} duplicate Trakt entries to remove:")
+            sys.stdout.flush()
             for dup in duplicates:
                 desc = self.format_entry_description(dup)
                 watched = dup["watched_at"][:10]
                 print(f"  - {desc} (watched: {watched})")
+                sys.stdout.flush()
 
             headers = self._get_headers(access_token)
             payload = {"ids": [entry["id"] for entry in duplicates]}
-            response = requests.post(f"{self.BASE_URL}/sync/history/remove", headers=headers, json=payload)
+            response = requests.post(
+                f"{self.BASE_URL}/sync/history/remove", headers=headers, json=payload, timeout=self.DEFAULT_TIMEOUT
+            )
             if response.status_code == 200:
                 print(f"[{timestamp()}] ✓ Successfully removed {len(duplicates)} duplicate Trakt entries")
+                sys.stdout.flush()
             else:
                 print(f"[{timestamp()}] ✗ Failed to delete Trakt duplicates: {response.status_code}")
+                sys.stdout.flush()
         else:
             print(f"[{timestamp()}] No Trakt duplicates found")
+            sys.stdout.flush()
