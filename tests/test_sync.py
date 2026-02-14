@@ -1,13 +1,9 @@
 import json
 import os
-import sys
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
-
-# Add parent directory to path to import modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import utils
 from toggl import TogglAPI
