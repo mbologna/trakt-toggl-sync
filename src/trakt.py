@@ -140,9 +140,9 @@ class TraktAPI:
 
         while True:
             response = requests.get(
-                f"{self.BASE_URL}/sync/history?extended=full",
+                f"{self.BASE_URL}/sync/history",
                 headers=headers,
-                params={"start_at": start_date, "page": page, "limit": 100},
+                params={"extended": "full", "start_at": start_date, "page": page, "limit": 100},
                 timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
