@@ -25,15 +25,11 @@ Note: Token refresh test may require manual authentication if tokens are expired
 """
 
 import os
-import sys
 import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import requests
-
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from toggl import TogglAPI
 from trakt import TraktAPI
