@@ -35,7 +35,7 @@ jobs:
           path: |
             ~/.cache/uv
             .venv
-          key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml') }}
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
           restore-keys: |
             ${{ runner.os }}-uv-
 
@@ -76,7 +76,7 @@ jobs:
           path: |
             ~/.cache/uv
             .venv
-          key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml') }}-py${{ matrix.python-version }}
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}-py${{ matrix.python-version }}
           restore-keys: |
             ${{ runner.os }}-uv-py${{ matrix.python-version }}-
 
