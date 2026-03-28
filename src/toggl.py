@@ -13,6 +13,7 @@ class TogglAPI:
     """Toggl API client for time tracking."""
 
     BASE_URL = "https://api.track.toggl.com/api/v9"
+    DEFAULT_TIMEOUT = (3.05, 10)
 
     def __init__(self, api_token, workspace_id, project_id, tags):
         self.api_token = api_token
@@ -56,6 +57,7 @@ class TogglAPI:
                     f"{self.BASE_URL}/me/time_entries",
                     params=params,
                     auth=(self.api_token, "api_token"),
+                    timeout=self.DEFAULT_TIMEOUT,
                 )
                 response.raise_for_status()
                 self._cached_entries = response.json()
@@ -126,6 +128,7 @@ class TogglAPI:
                 f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries",
                 json=data,
                 auth=(self.api_token, "api_token"),
+                timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
             start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
@@ -159,6 +162,7 @@ class TogglAPI:
                         f"{self.BASE_URL}/me/time_entries",
                         params=params,
                         auth=(self.api_token, "api_token"),
+                        timeout=self.DEFAULT_TIMEOUT,
                     )
                     response.raise_for_status()
                 except requests.exceptions.HTTPError as e:
@@ -193,25 +197,28 @@ class TogglAPI:
 
             print(f"[{timestamp()}] Found {len(filtered_entries)} Toggl entries in project")
 
-            # Find duplicates by description
-            entries_by_description = {}
+            # Find duplicates by (description, start, stop)
+            entries_by_key = {}
             for entry in filtered_entries:
                 desc = entry.get("description", "")
                 if desc:
-                    if desc not in entries_by_description:
-                        entries_by_description[desc] = []
-                    entries_by_description[desc].append(entry)
+                    start = self.normalize_timestamp(entry["start"]).isoformat()
+                    stop = self.normalize_timestamp(entry["stop"]).isoformat() if entry.get("stop") else ""
+                    key = (desc, start, stop)
+                    if key not in entries_by_key:
+                        entries_by_key[key] = []
+                    entries_by_key[key].append(entry)
 
-            duplicates = {desc: entries for desc, entries in entries_by_description.items() if len(entries) > 1}
+            duplicates = {key: entries for key, entries in entries_by_key.items() if len(entries) > 1}
 
             if duplicates:
                 total_deleted = 0
                 entries_to_delete_count = sum(len(entries) - 1 for entries in duplicates.values())
                 print(f"[{timestamp()}] Found {entries_to_delete_count} duplicate Toggl entries to remove:")
 
-                for description, entries in duplicates.items():
-                    print(f"  - {description} ({len(entries)} occurrences)")
-                    entries.sort(key=lambda x: x.get("start", ""))
+                for key, entries in duplicates.items():
+                    print(f"  - {key[0]} ({len(entries)} occurrences)")
+                    entries.sort(key=lambda x: x.get("id", 0))
                     entries_to_delete = entries[:-1]
 
                     for entry in entries_to_delete:
@@ -219,6 +226,7 @@ class TogglAPI:
                         response = requests.delete(
                             f"{self.BASE_URL}/time_entries/{entry['id']}",
                             auth=(self.api_token, "api_token"),
+                            timeout=self.DEFAULT_TIMEOUT,
                         )
                         if response.status_code == 200:
                             print(f"    ✓ Deleted: {start}")

@@ -68,7 +68,5 @@ logs/
 .cache/
 
 # Testing
-.tox/
-.coverage.*
 coverage.xml
 *.cover
