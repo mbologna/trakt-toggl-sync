@@ -70,3 +70,6 @@ logs/
 # Testing
 coverage.xml
 *.cover
+
+# Claude Code
+CLAUDE.md
