@@ -117,12 +117,16 @@ def main():
         for item in history:
             process_history_item(item, toggl, sync_state, SYNC_STATE_FILE)
     except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 402:
+        if e.response.status_code in (402, 429):
             print(f"[{timestamp()}] ⚠ Sync stopped due to rate limits.")
             print(f"[{timestamp()}] Run again later to sync remaining entries.")
             sys.stdout.flush()
         else:
             raise
+    except requests.exceptions.ConnectionError as e:
+        print(f"[{timestamp()}] ⚠ Network error during sync: {e}")
+        print(f"[{timestamp()}] Run again later to sync remaining entries.")
+        sys.stdout.flush()
 
     print(f"\n[{timestamp()}] ===== Sync Complete =====")
     sys.stdout.flush()

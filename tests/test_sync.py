@@ -1,9 +1,10 @@
 import json
 import os
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 import utils
 from toggl import TogglAPI
@@ -107,6 +108,110 @@ class TestTogglAPI:
         with patch.object(api, "get_cached_entries", return_value=None):
             result = api.entry_exists("Test", "2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z")
             assert result is True
+
+    def test_get_cached_entries_skips_when_rate_limited(self):
+        """Test get_cached_entries returns None immediately when rate limited, without making a network call."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+        api._rate_limited = True
+
+        with patch("toggl.requests.get") as mock_get:
+            result = api.get_cached_entries()
+            assert result is None
+            mock_get.assert_not_called()
+
+    def test_update_entry_skips_when_rate_limited(self):
+        """Test update_entry returns None and skips the network call when rate limited."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+        api._rate_limited = True
+
+        with patch("toggl.requests.put") as mock_put:
+            result = api.update_entry(999, "Test", "2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z")
+            assert result is None
+            mock_put.assert_not_called()
+
+    def test_create_entry_skips_when_rate_limited(self):
+        """Test create_entry returns None and skips the network call when rate limited."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+        api._rate_limited = True
+
+        with patch("toggl.requests.post") as mock_post:
+            result = api.create_entry("Test", "2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z")
+            assert result is None
+            mock_post.assert_not_called()
+
+    def test_update_quota_sets_rate_limited_when_low(self):
+        """Test _update_quota proactively sets _rate_limited when quota hits the threshold."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+
+        mock_response = MagicMock()
+        mock_response.headers = {
+            "X-Toggl-Quota-Remaining": str(TogglAPI.QUOTA_STOP_THRESHOLD),
+            "X-Toggl-Quota-Resets-In": "1800",
+        }
+        api._update_quota(mock_response)
+
+        assert api._rate_limited is True
+        assert api._quota_remaining == TogglAPI.QUOTA_STOP_THRESHOLD
+        assert api._quota_resets_in == 1800
+
+    def test_update_quota_does_not_set_rate_limited_when_ample(self):
+        """Test _update_quota does not set _rate_limited when quota is sufficient."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+
+        mock_response = MagicMock()
+        mock_response.headers = {
+            "X-Toggl-Quota-Remaining": "20",
+            "X-Toggl-Quota-Resets-In": "1800",
+        }
+        api._update_quota(mock_response)
+
+        assert api._rate_limited is False
+        assert api._quota_remaining == 20
+
+    def test_update_quota_no_headers(self):
+        """Test _update_quota handles missing quota headers gracefully."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+
+        mock_response = MagicMock()
+        mock_response.headers = {}
+        api._update_quota(mock_response)
+
+        assert api._rate_limited is False
+        assert api._quota_remaining is None
+
+    def test_get_cached_entries_proactive_rate_limit(self):
+        """Test get_cached_entries sets rate limited after quota threshold response."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status.return_value = None
+        mock_response.headers = {
+            "X-Toggl-Quota-Remaining": "2",
+            "X-Toggl-Quota-Resets-In": "600",
+        }
+
+        with patch("toggl.requests.get", return_value=mock_response):
+            result = api.get_cached_entries()
+
+        # Request succeeded but quota is now too low — next call should be blocked
+        assert result == []
+        assert api._rate_limited is True
+
+    def test_get_cached_entries_handles_429(self):
+        """Test get_cached_entries handles 429 rate limit response."""
+        api = TogglAPI("token", 123, 456, ["tag"])
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        http_error = requests.exceptions.HTTPError(response=mock_response)
+        mock_response.raise_for_status.side_effect = http_error
+
+        with patch("toggl.requests.get", return_value=mock_response):
+            result = api.get_cached_entries()
+
+        assert result is None
+        assert api._rate_limited is True
 
 
 if __name__ == "__main__":

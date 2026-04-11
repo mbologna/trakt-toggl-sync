@@ -15,6 +15,8 @@ class TogglAPI:
     BASE_URL = "https://api.track.toggl.com/api/v9"
     DEFAULT_TIMEOUT = (3.05, 10)
 
+    QUOTA_STOP_THRESHOLD = 3  # Stop proactively when this many requests remain
+
     def __init__(self, api_token, workspace_id, project_id, tags):
         self.api_token = api_token
         self.workspace_id = workspace_id
@@ -24,6 +26,29 @@ class TogglAPI:
         self._cache_timestamp = None
         self._cache_duration = 300  # Cache for 5 minutes
         self._rate_limited = False
+        self._quota_remaining = None
+        self._quota_resets_in = None
+
+    def _update_quota(self, response):
+        """Parse quota headers and proactively stop when running low."""
+        remaining = response.headers.get("X-Toggl-Quota-Remaining")
+        resets_in = response.headers.get("X-Toggl-Quota-Resets-In")
+        if remaining is not None:
+            self._quota_remaining = int(remaining)
+        if resets_in is not None:
+            self._quota_resets_in = int(resets_in)
+        if (
+            self._quota_remaining is not None
+            and self._quota_remaining <= self.QUOTA_STOP_THRESHOLD
+            and not self._rate_limited
+        ):
+            mins = round(self._quota_resets_in / 60) if self._quota_resets_in else "?"
+            print(
+                f"[{timestamp()}] ⚠ Toggl quota almost exhausted "
+                f"({self._quota_remaining} requests remaining, resets in ~{mins} min). "
+                f"Stopping to avoid hitting the limit."
+            )
+            self._rate_limited = True
 
     @staticmethod
     def parse_time(time_str):
@@ -39,6 +64,9 @@ class TogglAPI:
 
     def get_cached_entries(self, start_date=None, force_refresh=False):
         """Get cached Toggl entries or fetch if cache is stale."""
+        if self._rate_limited:
+            return None
+
         now = time.time()
         if (
             force_refresh
@@ -60,11 +88,12 @@ class TogglAPI:
                     timeout=self.DEFAULT_TIMEOUT,
                 )
                 response.raise_for_status()
+                self._rate_limited = False  # Clear any previous error state
+                self._update_quota(response)  # May re-set if quota is low
                 self._cached_entries = response.json()
                 self._cache_timestamp = now
-                self._rate_limited = False
             except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 402:
+                if e.response.status_code in (402, 429):
                     if not self._rate_limited:
                         print(f"[{timestamp()}] ⚠ Toggl rate limit reached.")
                         print(
@@ -136,13 +165,14 @@ class TogglAPI:
                 timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
+            self._update_quota(response)
             entry = response.json()
             start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
             print(f"[{timestamp()}] ✓ Created: {description} (at {start_dt})")
             self._cached_entries = None
             return entry.get("id")
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 402:
+            if e.response.status_code in (402, 429):
                 print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
                 self._rate_limited = True
                 raise
@@ -152,6 +182,10 @@ class TogglAPI:
 
     def update_entry(self, entry_id, description, start_time, end_time):
         """Update an existing Toggl time entry. Returns the entry ID, or None if not found."""
+        if self._rate_limited:
+            print(f"[{timestamp()}] Skipped (rate limited): {description}")
+            return None
+
         data = {
             "description": description,
             "start": start_time,
@@ -169,6 +203,7 @@ class TogglAPI:
                 timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
+            self._update_quota(response)
             start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
             print(f"[{timestamp()}] ↻ Updated: {description} (at {start_dt})")
             self._cached_entries = None
@@ -176,7 +211,7 @@ class TogglAPI:
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 return None  # Entry was deleted from Toggl
-            elif e.response.status_code == 402:
+            elif e.response.status_code in (402, 429):
                 print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
                 self._rate_limited = True
                 raise
@@ -205,12 +240,17 @@ class TogglAPI:
                         timeout=self.DEFAULT_TIMEOUT,
                     )
                     response.raise_for_status()
+                    self._update_quota(response)
                 except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 402:
-                        print(f"[{timestamp()}] ⚠ Toggl rate limit reached (402). Skipping deduplication.")
+                    if e.response.status_code in (402, 429):
+                        print(f"[{timestamp()}] ⚠ Toggl rate limit reached. Skipping deduplication.")
                         print(f"[{timestamp()}] This is temporary - try again in a few minutes.")
                         return
                     raise
+
+                if self._rate_limited:
+                    print(f"[{timestamp()}] ⚠ Quota too low to continue deduplication. Skipping.")
+                    return
 
                 batch = response.json()
 
