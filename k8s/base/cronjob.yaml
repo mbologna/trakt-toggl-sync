@@ -68,9 +68,11 @@ spec:
                 secretKeyRef:
                   name: trakt-toggl-credentials
                   key: TOGGL_API_TOKEN
-            # Token file location
+            # Token and state file locations
             - name: TRAKT_TOKEN_FILE
               value: "/app/data/.trakt_tokens.json"
+            - name: SYNC_STATE_FILE
+              value: "/app/data/.sync_state.json"
             volumeMounts:
             - name: token-storage
               mountPath: /app/data
