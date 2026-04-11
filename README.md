@@ -17,7 +17,8 @@ This bridges productivity tracking with leisure tracking for a truly comprehensi
 ## Features
 
 - ✅ Auto-deduplication (Trakt and Toggl)
-- ✅ Smart syncing with caching
+- ✅ Smart syncing with stateful sync log (prevents re-watch duplicates)
+- ✅ Retroactive close-in-time duplicate cleanup (24-hour window)
 - ✅ Automatic token refresh
 - ✅ Graceful rate limit handling
 - ✅ Multiple deployment options (local, Docker, Kubernetes)
@@ -25,8 +26,8 @@ This bridges productivity tracking with leisure tracking for a truly comprehensi
 ## How It Works
 
 1. **Deduplicate Trakt** - Removes duplicate watch history entries
-2. **Deduplicate Toggl** - Removes duplicate time entries
-3. **Sync** - Creates Toggl entries for recent Trakt history (default: 7 days)
+2. **Deduplicate Toggl** - Removes duplicate time entries, including a second pass that clusters entries with the same title within 24 hours and keeps only the most recently created one (retroactive re-watch cleanup)
+3. **Sync** - Creates or updates Toggl entries for recent Trakt history (default: 7 days), using a persistent state file (`.sync_state.json`) to map each Trakt content ID to its Toggl entry ID—preventing duplicate entries when the same episode is re-watched across sync runs
 
 Rate limits are handled gracefully—if Toggl returns 402, deduplication is skipped and sync continues.
 
@@ -95,6 +96,9 @@ TOGGL_API_TOKEN=your_api_token
 TOGGL_WORKSPACE_ID=your_workspace_id
 TOGGL_PROJECT_ID=your_project_id
 TOGGL_TAGS=watching,entertainment
+
+# State (optional — defaults to .sync_state.json)
+SYNC_STATE_FILE=.sync_state.json
 ```
 
 ### Docker
