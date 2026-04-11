@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from toggl import TogglAPI
 from trakt import TraktAPI
-from utils import check_required_env_variables, load_json_file, timestamp
+from utils import check_required_env_variables, load_json_file, save_json_file, timestamp
 
 # Load environment variables
 load_dotenv()
@@ -27,9 +27,12 @@ TOGGL_TAGS = [tag.strip() for tag in os.getenv("TOGGL_TAGS", "").split(",") if t
 # Token file location
 TRAKT_TOKEN_FILE = os.getenv("TRAKT_TOKEN_FILE", ".trakt_tokens.json")
 
+# Sync state file — maps Trakt content IDs to Toggl entry IDs to enable update-in-place
+SYNC_STATE_FILE = os.getenv("SYNC_STATE_FILE", ".sync_state.json")
 
-def process_history_item(item, toggl_api):
-    """Process a single history item and create Toggl entry."""
+
+def process_history_item(item, toggl_api, sync_state, state_file):
+    """Process a single history item: update existing Toggl entry or create a new one."""
     watched_at = item["watched_at"]
     item_type = item["type"]
 
@@ -40,18 +43,31 @@ def process_history_item(item, toggl_api):
             f"{item['episode']['title']}"
         )
         runtime = item["episode"]["runtime"]
+        state_key = f"episode:{item['episode']['ids']['trakt']}"
     else:
         title = f"🎞️ {item['movie']['title']} ({item['movie'].get('year', 'N/A')})"
         runtime = item["movie"].get("runtime", 0)
+        state_key = f"movie:{item['movie']['ids']['trakt']}"
 
     end_time = datetime.fromisoformat(watched_at[:-1])
     start_time = end_time - timedelta(minutes=runtime)
+    start_iso = start_time.isoformat() + "Z"
 
-    toggl_api.create_entry(
-        description=title,
-        start_time=start_time.isoformat() + "Z",
-        end_time=watched_at,
-    )
+    existing_toggl_id = sync_state.get(state_key)
+    new_id = None
+
+    if existing_toggl_id:
+        new_id = toggl_api.update_entry(existing_toggl_id, title, start_iso, watched_at)
+        if new_id is None:
+            # Entry was deleted from Toggl; fall through to create
+            print(f"[{timestamp()}] State entry gone from Toggl, recreating: {title}")
+
+    if new_id is None:
+        new_id = toggl_api.create_entry(description=title, start_time=start_iso, end_time=watched_at)
+
+    if new_id and sync_state.get(state_key) != new_id:
+        sync_state[state_key] = new_id
+        save_json_file(state_file, sync_state)
 
 
 def main():
@@ -93,11 +109,13 @@ def main():
     start_date_str = (datetime.now() - timedelta(days=TRAKT_HISTORY_DAYS)).strftime("%Y-%m-%d")
     toggl.get_cached_entries(start_date=start_date_str, force_refresh=True)
 
+    sync_state = load_json_file(SYNC_STATE_FILE) or {}
+
     print(f"[{timestamp()}] Processing {len(history)} entries...")
     sys.stdout.flush()
     try:
         for item in history:
-            process_history_item(item, toggl)
+            process_history_item(item, toggl, sync_state, SYNC_STATE_FILE)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 402:
             print(f"[{timestamp()}] ⚠ Sync stopped due to rate limits.")
