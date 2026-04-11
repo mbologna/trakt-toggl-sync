@@ -5,7 +5,7 @@ description = "Sync Trakt viewing history to Toggl with automatic deduplication"
 requires-python = ">=3.14"
 dependencies = [
     "requests>=2.31.0",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [tool.uv]
