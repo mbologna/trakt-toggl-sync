@@ -39,6 +39,9 @@ env/
 .trakt_tokens.json
 *.tokens.json
 
+# Sync state
+.sync_state.json
+
 # Data directory (Docker volume)
 data/
 app/data/
