@@ -284,6 +284,66 @@ class TogglAPI:
             else:
                 print(f"[{timestamp()}] No exact Toggl duplicates found")
 
+            # Second pass: close-in-time duplicates (same description, starts within 24h)
+            # Handles re-watch entries created across separate sync runs
+            CLOSE_WINDOW_SECONDS = 24 * 3600
+            entries_by_desc: dict = {}
+            for entry in filtered_entries:
+                desc = entry.get("description", "")
+                if desc:
+                    entries_by_desc.setdefault(desc, []).append(entry)
+
+            close_dups = []
+            for desc_entries in entries_by_desc.values():
+                if len(desc_entries) < 2:
+                    continue
+                desc_entries.sort(key=lambda x: x["start"])
+                i = 0
+                while i < len(desc_entries):
+                    cluster = [desc_entries[i]]
+                    j = i + 1
+                    while j < len(desc_entries):
+                        gap = (
+                            self.normalize_timestamp(desc_entries[j]["start"])
+                            - self.normalize_timestamp(desc_entries[j - 1]["start"])
+                        ).total_seconds()
+                        if gap <= CLOSE_WINDOW_SECONDS:
+                            cluster.append(desc_entries[j])
+                            j += 1
+                        else:
+                            break
+                    if len(cluster) > 1:
+                        cluster.sort(key=lambda x: x.get("id", 0))
+                        close_dups.extend(cluster[:-1])
+                    i = j
+
+            # Exclude IDs already deleted in the first pass
+            close_dups = [e for e in close_dups if e["id"] not in first_pass_deleted_ids]
+
+            if close_dups:
+                total_close_deleted = 0
+                print(f"[{timestamp()}] Found {len(close_dups)} close-in-time Toggl duplicates to remove:")
+                for entry in close_dups:
+                    start = self.parse_time(entry["start"]).strftime("%Y-%m-%d %H:%M")
+                    desc = entry.get("description", "")
+                    response = requests.delete(
+                        f"{self.BASE_URL}/time_entries/{entry['id']}",
+                        auth=(self.api_token, "api_token"),
+                        timeout=self.DEFAULT_TIMEOUT,
+                    )
+                    if response.status_code == 200:
+                        print(f"  ✓ Deleted: {desc} (at {start})")
+                        total_close_deleted += 1
+                    else:
+                        print(
+                            f"  ✗ Failed to delete: {desc} (at {start}) - {response.status_code}",
+                            file=sys.stderr,
+                        )
+                print(f"[{timestamp()}] Successfully removed {total_close_deleted} close-in-time Toggl duplicates")
+                self._cached_entries = None
+            else:
+                print(f"[{timestamp()}] No close-in-time Toggl duplicates found")
+
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 402:
                 print(f"[{timestamp()}] ⚠ Toggl rate limit reached. Skipping deduplication.")
