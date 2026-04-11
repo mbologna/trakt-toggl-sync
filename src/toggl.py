@@ -78,40 +78,45 @@ class TogglAPI:
 
         return self._cached_entries
 
-    def entry_exists(self, description, start_time, end_time):
-        """Check if entry exists using cached data."""
+    def find_existing_entry(self, description, start_time, end_time):
+        """Find an existing entry matching description+times. Returns entry dict or None."""
         entries = self.get_cached_entries()
-
-        # If rate limited, we can't check, so return True to skip creation
         if entries is None:
-            return True  # Assume exists to avoid creating duplicates
+            return None
 
-        start_time = self.normalize_timestamp(start_time)
-        end_time = self.normalize_timestamp(end_time)
+        start_dt = self.normalize_timestamp(start_time)
+        end_dt = self.normalize_timestamp(end_time)
 
         for entry in entries:
-            entry_start = self.normalize_timestamp(entry["start"])
-            entry_end = self.normalize_timestamp(entry["stop"]) if entry.get("stop") else None
-
+            if not entry.get("stop"):
+                continue
             if (
-                entry["description"] == description
-                and entry_start == start_time
-                and (entry_end == end_time if entry_end else False)
+                entry.get("description") == description
+                and self.normalize_timestamp(entry["start"]) == start_dt
+                and self.normalize_timestamp(entry["stop"]) == end_dt
                 and entry.get("project_id") == self.project_id
                 and set(entry.get("tags", [])) == set(self.tags)
                 and entry.get("wid") == self.workspace_id
             ):
-                return True
-        return False
+                return entry
+        return None
+
+    def entry_exists(self, description, start_time, end_time):
+        """Check if entry exists using cached data."""
+        if self.get_cached_entries() is None:
+            return True  # Assume exists to avoid creating duplicates when rate limited
+        return self.find_existing_entry(description, start_time, end_time) is not None
 
     def create_entry(self, description, start_time, end_time):
-        """Create a new Toggl time entry."""
-        if self.entry_exists(description, start_time, end_time):
-            if self._rate_limited:
-                print(f"[{timestamp()}] Skipped (rate limited): {description}")
-            else:
-                print(f"[{timestamp()}] Skipped (exists): {description}")
-            return
+        """Create a new Toggl time entry. Returns the entry ID, or None on failure."""
+        if self.get_cached_entries() is None:
+            print(f"[{timestamp()}] Skipped (rate limited): {description}")
+            return None
+
+        existing = self.find_existing_entry(description, start_time, end_time)
+        if existing:
+            print(f"[{timestamp()}] Skipped (exists): {description}")
+            return existing["id"]
 
         data = {
             "description": description,
@@ -131,18 +136,53 @@ class TogglAPI:
                 timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
+            entry = response.json()
             start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
             print(f"[{timestamp()}] ✓ Created: {description} (at {start_dt})")
-            # Invalidate cache after creating entry
             self._cached_entries = None
+            return entry.get("id")
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 402:
                 print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
                 self._rate_limited = True
-                # Re-raise to stop the sync process
                 raise
             else:
                 print(f"[{timestamp()}] ✗ Failed to create: {description} - {e.response.text}", file=sys.stderr)
+                return None
+
+    def update_entry(self, entry_id, description, start_time, end_time):
+        """Update an existing Toggl time entry. Returns the entry ID, or None if not found."""
+        data = {
+            "description": description,
+            "start": start_time,
+            "stop": end_time,
+            "created_with": "trakt-toggl-sync",
+            "project_id": self.project_id,
+            "tags": self.tags,
+            "wid": self.workspace_id,
+        }
+        try:
+            response = requests.put(
+                f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries/{entry_id}",
+                json=data,
+                auth=(self.api_token, "api_token"),
+                timeout=self.DEFAULT_TIMEOUT,
+            )
+            response.raise_for_status()
+            start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
+            print(f"[{timestamp()}] ↻ Updated: {description} (at {start_dt})")
+            self._cached_entries = None
+            return response.json().get("id")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                return None  # Entry was deleted from Toggl
+            elif e.response.status_code == 402:
+                print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
+                self._rate_limited = True
+                raise
+            else:
+                print(f"[{timestamp()}] ✗ Failed to update: {description} - {e.response.text}", file=sys.stderr)
+                return None
 
     def remove_duplicates(self):
         """Remove duplicate entries from Toggl, keeping most recent."""
@@ -197,7 +237,7 @@ class TogglAPI:
 
             print(f"[{timestamp()}] Found {len(filtered_entries)} Toggl entries in project")
 
-            # Find duplicates by (description, start, stop)
+            # First pass: exact duplicates by (description, start, stop)
             entries_by_key = {}
             for entry in filtered_entries:
                 desc = entry.get("description", "")
@@ -211,6 +251,7 @@ class TogglAPI:
 
             duplicates = {key: entries for key, entries in entries_by_key.items() if len(entries) > 1}
 
+            first_pass_deleted_ids = set()
             if duplicates:
                 total_deleted = 0
                 entries_to_delete_count = sum(len(entries) - 1 for entries in duplicates.values())
@@ -231,6 +272,7 @@ class TogglAPI:
                         if response.status_code == 200:
                             print(f"    ✓ Deleted: {start}")
                             total_deleted += 1
+                            first_pass_deleted_ids.add(entry["id"])
                         else:
                             print(
                                 f"    ✗ Failed to delete: {start} - {response.status_code}",
@@ -238,10 +280,9 @@ class TogglAPI:
                             )
 
                 print(f"[{timestamp()}] Successfully removed {total_deleted} duplicate Toggl entries")
-                # Clear cache after deletion
                 self._cached_entries = None
             else:
-                print(f"[{timestamp()}] No Toggl duplicates found")
+                print(f"[{timestamp()}] No exact Toggl duplicates found")
 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 402:
