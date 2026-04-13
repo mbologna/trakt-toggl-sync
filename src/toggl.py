@@ -136,6 +136,39 @@ class TogglAPI:
             return True  # Assume exists to avoid creating duplicates when rate limited
         return self.find_existing_entry(description, start_time, end_time) is not None
 
+    def _is_entry_unchanged(self, entry_id, description, start_time, end_time):
+        """Return True if the cached entry with entry_id already matches the given data."""
+        if self._cached_entries is None:
+            return False
+        for entry in self._cached_entries:
+            if entry.get("id") == entry_id:
+                return (
+                    entry.get("description") == description
+                    and entry.get("stop") is not None
+                    and self.normalize_timestamp(entry["start"]) == self.normalize_timestamp(start_time)
+                    and self.normalize_timestamp(entry["stop"]) == self.normalize_timestamp(end_time)
+                    and entry.get("project_id") == self.project_id
+                    and set(entry.get("tags") or []) == set(self.tags)
+                    and entry.get("wid") == self.workspace_id
+                )
+        return False
+
+    def _update_cache_entry(self, entry):
+        """Replace or append an entry in the local cache."""
+        if self._cached_entries is None:
+            return
+        entry_id = entry.get("id")
+        for i, e in enumerate(self._cached_entries):
+            if e.get("id") == entry_id:
+                self._cached_entries[i] = entry
+                return
+        self._cached_entries.append(entry)
+
+    def _remove_from_cache(self, entry_id):
+        """Remove an entry from the local cache by ID."""
+        if self._cached_entries is not None:
+            self._cached_entries = [e for e in self._cached_entries if e.get("id") != entry_id]
+
     def create_entry(self, description, start_time, end_time):
         """Create a new Toggl time entry. Returns the entry ID, or None on failure."""
         if self.get_cached_entries() is None:
@@ -169,7 +202,7 @@ class TogglAPI:
             entry = response.json()
             start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
             print(f"[{timestamp()}] ✓ Created: {description} (at {start_dt})")
-            self._cached_entries = None
+            self._update_cache_entry(entry)
             return entry.get("id")
         except requests.exceptions.HTTPError as e:
             if e.response.status_code in (402, 429):
@@ -184,7 +217,10 @@ class TogglAPI:
         """Update an existing Toggl time entry. Returns the entry ID, or None if not found."""
         if self._rate_limited:
             print(f"[{timestamp()}] Skipped (rate limited): {description}")
-            return None
+            return entry_id  # Entry still exists, we just can't update it right now
+
+        if self._is_entry_unchanged(entry_id, description, start_time, end_time):
+            return entry_id  # Nothing to do
 
         data = {
             "description": description,
@@ -204,12 +240,14 @@ class TogglAPI:
             )
             response.raise_for_status()
             self._update_quota(response)
+            updated = response.json()
             start_dt = self.parse_time(start_time).strftime("%Y-%m-%d %H:%M")
             print(f"[{timestamp()}] ↻ Updated: {description} (at {start_dt})")
-            self._cached_entries = None
-            return response.json().get("id")
+            self._update_cache_entry(updated)
+            return updated.get("id")
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
+                self._remove_from_cache(entry_id)
                 return None  # Entry was deleted from Toggl
             elif e.response.status_code in (402, 429):
                 print(f"[{timestamp()}] ⚠ Rate limit reached. Stopping sync.")
@@ -218,6 +256,21 @@ class TogglAPI:
             else:
                 print(f"[{timestamp()}] ✗ Failed to update: {description} - {e.response.text}", file=sys.stderr)
                 return None
+
+    def delete_entry(self, entry_id):
+        """Delete a Toggl time entry by ID. Returns True on success."""
+        try:
+            response = requests.delete(
+                f"{self.BASE_URL}/workspaces/{self.workspace_id}/time_entries/{entry_id}",
+                auth=(self.api_token, "api_token"),
+                timeout=self.DEFAULT_TIMEOUT,
+            )
+            if response.status_code == 200:
+                self._remove_from_cache(entry_id)
+                return True
+            return False
+        except requests.exceptions.RequestException:
+            return False
 
     def remove_duplicates(self):
         """Remove duplicate entries from Toggl, keeping most recent."""

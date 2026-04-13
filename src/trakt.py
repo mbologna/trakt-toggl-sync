@@ -118,7 +118,7 @@ class TraktAPI:
             response = requests.get(
                 f"{self.BASE_URL}/sync/history",
                 headers=headers,
-                params={"page": page, "limit": 1000},
+                params={"extended": "full", "page": page, "limit": 1000},
                 timeout=self.DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
@@ -205,9 +205,11 @@ class TraktAPI:
             if response.status_code == 200:
                 print(f"[{timestamp()}] ✓ Successfully removed {len(duplicates)} duplicate Trakt entries")
                 sys.stdout.flush()
+                return duplicates
             else:
                 print(f"[{timestamp()}] ✗ Failed to delete Trakt duplicates: {response.status_code}")
                 sys.stdout.flush()
         else:
             print(f"[{timestamp()}] No Trakt duplicates found")
             sys.stdout.flush()
+        return []
