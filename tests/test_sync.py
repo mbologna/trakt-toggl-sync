@@ -120,13 +120,13 @@ class TestTogglAPI:
             mock_get.assert_not_called()
 
     def test_update_entry_skips_when_rate_limited(self):
-        """Test update_entry returns None and skips the network call when rate limited."""
+        """Test update_entry returns the entry_id and skips the network call when rate limited."""
         api = TogglAPI("token", 123, 456, ["tag"])
         api._rate_limited = True
 
         with patch("toggl.requests.put") as mock_put:
             result = api.update_entry(999, "Test", "2025-01-01T12:00:00Z", "2025-01-01T13:00:00Z")
-            assert result is None
+            assert result == 999
             mock_put.assert_not_called()
 
     def test_create_entry_skips_when_rate_limited(self):
