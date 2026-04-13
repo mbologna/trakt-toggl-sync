@@ -31,6 +31,42 @@ TRAKT_TOKEN_FILE = os.getenv("TRAKT_TOKEN_FILE", ".trakt_tokens.json")
 SYNC_STATE_FILE = os.getenv("SYNC_STATE_FILE", ".sync_state.json")
 
 
+def cleanup_toggl_for_removed_trakt_entries(removed_trakt_entries, toggl_api, sync_state, state_file):
+    """Delete Toggl entries that correspond to Trakt entries removed during deduplication."""
+    for item in removed_trakt_entries:
+        watched_at = item["watched_at"]
+        item_type = item["type"]
+
+        if item_type == "episode":
+            title = (
+                f"📺 {item['show']['title']} - "
+                f"S{item['episode']['season']:02}E{item['episode']['number']:02} - "
+                f"{item['episode']['title']}"
+            )
+            runtime = item["episode"].get("runtime") or 0
+            state_key = f"episode:{item['episode']['ids']['trakt']}"
+        else:
+            title = f"🎞️ {item['movie']['title']} ({item['movie'].get('year', 'N/A')})"
+            runtime = item["movie"].get("runtime") or 0
+            state_key = f"movie:{item['movie']['ids']['trakt']}"
+
+        if runtime == 0:
+            continue  # Can't compute start time without runtime
+
+        end_time = datetime.fromisoformat(watched_at[:-1])
+        start_time = end_time - timedelta(minutes=runtime)
+        start_iso = start_time.isoformat() + "Z"
+
+        existing = toggl_api.find_existing_entry(title, start_iso, watched_at)
+        if existing:
+            if toggl_api.delete_entry(existing["id"]):
+                start_dt = start_time.strftime("%Y-%m-%d %H:%M")
+                print(f"[{timestamp()}] 🗑 Removed orphaned Toggl entry: {title} (at {start_dt})")
+                if sync_state.get(state_key) == existing["id"]:
+                    del sync_state[state_key]
+                    save_json_file(state_file, sync_state)
+
+
 def process_history_item(item, toggl_api, sync_state, state_file):
     """Process a single history item: update existing Toggl entry or create a new one."""
     watched_at = item["watched_at"]
@@ -91,7 +127,7 @@ def main():
     # Step 1: Remove Trakt duplicates
     print(f"\n[{timestamp()}] === Step 1: Removing Trakt Duplicates ===")
     sys.stdout.flush()
-    trakt.remove_duplicates(tokens["access_token"])
+    removed_trakt_entries = trakt.remove_duplicates(tokens["access_token"])
 
     # Step 2: Remove Toggl duplicates
     print(f"\n[{timestamp()}] === Step 2: Removing Toggl Duplicates ===")
@@ -110,6 +146,10 @@ def main():
     toggl.get_cached_entries(start_date=start_date_str, force_refresh=True)
 
     sync_state = load_json_file(SYNC_STATE_FILE) or {}
+
+    # Clean up any Toggl entries corresponding to removed Trakt duplicates
+    if removed_trakt_entries:
+        cleanup_toggl_for_removed_trakt_entries(removed_trakt_entries, toggl, sync_state, SYNC_STATE_FILE)
 
     print(f"[{timestamp()}] Processing {len(history)} entries...")
     sys.stdout.flush()
