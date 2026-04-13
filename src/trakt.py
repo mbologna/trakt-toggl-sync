@@ -41,6 +41,10 @@ class TraktAPI:
 
     def authenticate(self):
         """Authenticate with Trakt via device flow."""
+        if os.environ.get("NON_INTERACTIVE"):
+            raise RuntimeError(
+                "Trakt re-authentication required but NON_INTERACTIVE is set. Run interactively to re-authenticate."
+            )
         response = requests.post(
             f"{self.BASE_URL}/oauth/device/code",
             json={"client_id": self.client_id},
