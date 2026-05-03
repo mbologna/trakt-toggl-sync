@@ -23,7 +23,7 @@ env:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@52c23f956da99f55be4ae1cb41ad09953953eee7 # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@ac8d6f1d386411c72e4bf328ba8e0df53f751ed6 # main
     with:
       python_version: "3.14"
       use_uv: true
@@ -31,7 +31,7 @@ jobs:
     secrets: inherit
 
   docker:
-    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@52c23f956da99f55be4ae1cb41ad09953953eee7 # main
+    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@ac8d6f1d386411c72e4bf328ba8e0df53f751ed6 # main
     with:
       image_name: trakt-toggl-sync
       enable_cosign: true
