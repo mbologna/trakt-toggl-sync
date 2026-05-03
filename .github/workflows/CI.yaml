@@ -11,6 +11,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
 env:
   REGISTRY_IMAGE_GHCR: ghcr.io/${{ github.repository_owner }}/trakt-toggl-sync
 
