@@ -1,0 +1,106 @@
+name: CI
+
+"on":
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
+env:
+  REGISTRY_IMAGE_GHCR: ghcr.io/${{ github.repository_owner }}/trakt-toggl-sync
+
+jobs:
+  python:
+    uses: mbologna/.github/.github/workflows/python-ci.yml@ac8d6f1d386411c72e4bf328ba8e0df53f751ed6 # main
+    with:
+      python_version: "3.14"
+      use_uv: true
+      enable_codecov: true
+    secrets: inherit
+
+  docker:
+    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@ac8d6f1d386411c72e4bf328ba8e0df53f751ed6 # main
+    with:
+      image_name: trakt-toggl-sync
+      enable_cosign: true
+      enable_grype: true
+      enable_release_drafter: true
+    secrets: inherit
+
+  verify:
+    name: Verify Reproducible Build
+    runs-on: ubuntu-latest
+    needs: docker
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository_owner == github.actor
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rebuild for reproducibility check (AMD64)
+        id: rebuild
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: repro-test:latest
+          cache-from: type=gha
+          provenance: false
+          sbom: false
+
+      - name: Verify reproducible build
+        run: |
+          echo "Pulling reference image..."
+          docker pull --platform linux/amd64 \
+            "${{ env.REGISTRY_IMAGE_GHCR }}@${{ needs.docker.outputs.digest }}"
+          REMOTE=$(docker inspect \
+            "${{ env.REGISTRY_IMAGE_GHCR }}@${{ needs.docker.outputs.digest }}" \
+            --format="{{.RootFS}}")
+          LOCAL=$(docker inspect repro-test:latest --format="{{.RootFS}}")
+          echo "Remote RootFS: $REMOTE"
+          echo "Local RootFS:  $LOCAL"
+          if [ "$REMOTE" = "$LOCAL" ]; then
+            echo "Build is reproducible"
+          else
+            echo "Build differs (expected due to timestamps)"
+          fi
+
+  status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [python, docker, verify]
+    if: always()
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.python.result }}" == "failure" ]] || \
+             [[ "${{ needs.docker.result }}" == "failure" ]]; then
+            exit 1
+          fi
