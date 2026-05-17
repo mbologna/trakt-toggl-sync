@@ -92,6 +92,17 @@ jobs:
             echo "Build differs (expected due to timestamps)"
           fi
 
+  deploy:
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@main
+    with:
+      image_name: trakt-toggl-sync
+      ar_image: europe-west1-docker.pkg.dev/trakt-toggl-sync/syncer/app
+      deploy_type: job
+      deploy_name: trakt-toggl-sync
+    secrets: inherit
+
   status:
     name: CI Status
     runs-on: ubuntu-latest

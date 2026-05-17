@@ -45,6 +45,7 @@ repos:
       - id: mypy
         additional_dependencies:
           - types-requests
+          - google-cloud-storage
         # Removed types-python-dotenv since python-dotenv has inline types
 
   # Security checks
