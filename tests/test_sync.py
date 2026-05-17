@@ -55,6 +55,54 @@ class TestUtilityFunctions:
         stat = os.stat(test_file)
         assert oct(stat.st_mode)[-3:] == "600"
 
+    def test_load_json_file_gcs(self):
+        """Test loading JSON from a GCS path delegates to the storage client."""
+        test_data = {"access_token": "abc"}
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = True
+        mock_blob.download_as_text.return_value = json.dumps(test_data)
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        with patch("google.cloud.storage.Client", return_value=mock_client):
+            result = utils.load_json_file("gs://my-bucket/tokens.json")
+
+        assert result == test_data
+        mock_client.bucket.assert_called_once_with("my-bucket")
+        mock_bucket.blob.assert_called_once_with("tokens.json")
+
+    def test_load_json_file_gcs_missing(self):
+        """Test loading a non-existent GCS object returns None."""
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = False
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        with patch("google.cloud.storage.Client", return_value=mock_client):
+            result = utils.load_json_file("gs://my-bucket/missing.json")
+
+        assert result is None
+
+    def test_save_json_file_gcs(self):
+        """Test saving JSON to a GCS path uploads via the storage client."""
+        test_data = {"key": "value"}
+        mock_blob = MagicMock()
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        with patch("google.cloud.storage.Client", return_value=mock_client):
+            utils.save_json_file("gs://my-bucket/state.json", test_data)
+
+        mock_blob.upload_from_string.assert_called_once_with(
+            json.dumps(test_data, indent=2), content_type="application/json"
+        )
+
 
 class TestTraktAPI:
     """Test Trakt API methods."""

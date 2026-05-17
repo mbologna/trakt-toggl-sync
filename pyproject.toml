@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "requests>=2.33.1",
     "python-dotenv>=1.2.2",
+    "google-cloud-storage>=2.0",
 ]
 
 [tool.uv]
