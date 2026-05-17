@@ -95,7 +95,7 @@ jobs:
   deploy:
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@main
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@ea59a4afeb9ba255cea7c09624130282ede2b23c # main
     with:
       image_name: trakt-toggl-sync
       ar_image: europe-west1-docker.pkg.dev/trakt-toggl-sync/syncer/app
