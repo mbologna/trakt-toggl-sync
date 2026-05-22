@@ -101,6 +101,7 @@ jobs:
       ar_image: us-central1-docker.pkg.dev/trakt-toggl-sync/syncer/app
       deploy_type: job
       deploy_name: trakt-toggl-sync
+      region: us-central1
     secrets: inherit
 
   status:
