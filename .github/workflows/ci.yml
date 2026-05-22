@@ -23,7 +23,7 @@ env:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@aeb30e0b1fc4aef2b2c92b84dd07b87ab5e3ab6b # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@f3f1584c4872c50a42e304b0bdb7cb40088e0bfe # main
     with:
       python_version: "3.14"
       use_uv: true
@@ -31,7 +31,7 @@ jobs:
     secrets: inherit
 
   docker:
-    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@aeb30e0b1fc4aef2b2c92b84dd07b87ab5e3ab6b # main
+    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@f3f1584c4872c50a42e304b0bdb7cb40088e0bfe # main
     with:
       image_name: trakt-toggl-sync
       enable_cosign: true
@@ -95,7 +95,7 @@ jobs:
   deploy:
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@aeb30e0b1fc4aef2b2c92b84dd07b87ab5e3ab6b # main
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@f3f1584c4872c50a42e304b0bdb7cb40088e0bfe # main
     with:
       image_name: trakt-toggl-sync
       ar_image: us-central1-docker.pkg.dev/trakt-toggl-sync/syncer/app
