@@ -31,7 +31,7 @@ jobs:
     secrets: inherit
 
   docker:
-    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@79e90cadfb3336caf16e4f749548dbea92d8d3bc # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@79e90cadfb3336caf16e4f749548dbea92d8d3bc # main
     with:
       image_name: trakt-toggl-sync
       enable_cosign: true
