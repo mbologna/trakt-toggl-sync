@@ -31,9 +31,10 @@ jobs:
     secrets: inherit
 
   docker:
-    uses: mbologna/.github/.github/workflows/docker-build-scan-push.yml@ea59a4afeb9ba255cea7c09624130282ede2b23c # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@main
     with:
       image_name: trakt-toggl-sync
+      push_to_dockerhub: true
       enable_cosign: true
       enable_grype: true
       enable_release_drafter: true
@@ -98,7 +99,6 @@ jobs:
     uses: mbologna/.github/.github/workflows/gcp-deploy.yml@main
     with:
       image_name: trakt-toggl-sync
-      ar_image: us-central1-docker.pkg.dev/trakt-toggl-sync/syncer/app
       deploy_type: job
       deploy_name: trakt-toggl-sync
     secrets: inherit
