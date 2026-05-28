@@ -34,6 +34,7 @@ jobs:
     uses: mbologna/.github/.github/workflows/docker-ci.yml@a8b58a8b6a171a867fda7e7a9ab74c85d3ca60dd # main
     with:
       image_name: trakt-toggl-sync
+      push_to_dockerhub: true
       enable_cosign: true
       enable_grype: true
       enable_release_drafter: true
