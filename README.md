@@ -4,7 +4,7 @@
 
 ## Motivation
 
-I use Toggl for holistic time management—tracking work, projects, and personal activities. However, entertainment time was missing from this picture.
+I use Toggl for holistic time management, tracking work, projects, and personal activities. However, entertainment time was missing from this picture.
 
 By syncing my Trakt viewing history to Toggl, I now have:
 - **Complete time tracking**: Work, hobbies, AND entertainment in one place
@@ -12,7 +12,7 @@ By syncing my Trakt viewing history to Toggl, I now have:
 - **Accurate reporting**: No gaps in my daily timeline
 - **Effortless tracking**: No manual entry for movies and TV shows
 
-This bridges productivity tracking with leisure tracking for a truly comprehensive view of my time.
+This bridges productivity tracking with leisure tracking for a full view of my time.
 
 ## Features
 
@@ -29,7 +29,7 @@ This bridges productivity tracking with leisure tracking for a truly comprehensi
 2. **Deduplicate Toggl** - Removes duplicate time entries, including a second pass that clusters entries with the same title within 24 hours and keeps only the most recently created one (retroactive re-watch cleanup)
 3. **Sync** - Creates or updates Toggl entries for recent Trakt history (default: 7 days), using a persistent state file (`.sync_state.json`) to map each Trakt content ID to its Toggl entry ID—preventing duplicate entries when the same episode is re-watched across sync runs
 
-Rate limits are handled gracefully—if Toggl returns 402, deduplication is skipped and sync continues.
+Rate limits are handled gracefully: if Toggl returns 402, deduplication is skipped and sync continues.
 
 The Kubernetes CronJob automatically refreshes OAuth tokens before they expire, ensuring uninterrupted syncing.
 
@@ -97,7 +97,7 @@ TOGGL_WORKSPACE_ID=your_workspace_id
 TOGGL_PROJECT_ID=your_project_id
 TOGGL_TAGS=watching,entertainment
 
-# State (optional — defaults to .sync_state.json)
+# State (optional, defaults to .sync_state.json)
 SYNC_STATE_FILE=.sync_state.json
 ```
 
@@ -202,7 +202,7 @@ The deployment uses a PersistentVolumeClaim (PVC) to store Trakt OAuth tokens. B
 ## Troubleshooting
 
 ### Rate Limiting (402 Error)
-- Handled gracefully—sync continues
+- Handled gracefully: sync continues
 - Deduplication skipped temporarily
 - Try again in a few minutes
 
@@ -257,7 +257,7 @@ make clean      # Clean cache
 
 ### End-to-End Testing
 
-The project includes comprehensive E2E tests that verify integration with real Trakt and Toggl APIs.
+The project includes E2E tests that verify integration with real Trakt and Toggl APIs.
 
 **Setup E2E Tests:**
 
