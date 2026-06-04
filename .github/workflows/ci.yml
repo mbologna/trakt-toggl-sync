@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  python:
+    uses: mbologna/.github/.github/workflows/python-ci.yml@6c12a94fd79c0e0b037fd126e568aa4f1f8e39f3 # main
+    with:
+      python_version: "3.14"
+      use_uv: true
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  docker:
+    needs: python
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@6c12a94fd79c0e0b037fd126e568aa4f1f8e39f3 # main
+    with:
+      image_name: trakt-toggl-sync
+    secrets:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
