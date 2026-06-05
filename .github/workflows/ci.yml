@@ -1,26 +1,48 @@
 name: CI
 
-on:
+"on":
   push:
-    branches: [main, develop]
+    branches: ["**"]
   pull_request:
-    branches: [main, develop]
-  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@6c12a94fd79c0e0b037fd126e568aa4f1f8e39f3 # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@60c0ffe12ebfe88e773c2780a7f71d80829ddfb4 # main
     with:
       python_version: "3.14"
       use_uv: true
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      enable_codecov: true
+    secrets: inherit
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@6c12a94fd79c0e0b037fd126e568aa4f1f8e39f3 # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@60c0ffe12ebfe88e773c2780a7f71d80829ddfb4 # main
     with:
       image_name: trakt-toggl-sync
-    secrets:
-      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      push_to_dockerhub: true
+      enable_grype: true
+      enable_cosign: true
+      enable_release_drafter: true
+    secrets: inherit
+
+  deploy:
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@60c0ffe12ebfe88e773c2780a7f71d80829ddfb4 # main
+    with:
+      image_name: trakt-toggl-sync
+      deploy_type: service
+      deploy_name: trakt-toggl-sync
+      region: us-central1
+    secrets: inherit

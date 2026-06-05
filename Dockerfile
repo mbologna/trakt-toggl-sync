@@ -25,4 +25,4 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-CMD ["python", "src/sync.py"]
+CMD ["python", "src/server.py"]
