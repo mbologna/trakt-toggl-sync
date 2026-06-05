@@ -110,12 +110,17 @@ make docker-setup
 # Build for local architecture
 make docker-build
 
-# Run locally
-make docker-run
-
 # Build and push multi-platform (amd64 + arm64) to Docker Hub
 make docker-push
 ```
+
+> **Note:** The Docker image starts `src/server.py` by default (an HTTP server on `$PORT`, default 8080). This is the entrypoint used when deployed to GCP Cloud Run. To run a one-shot sync from the image, override the command:
+>
+> ```bash
+> docker run --env-file .env trakt-toggl-sync:latest python src/sync.py
+> ```
+>
+> For local development, `make run` (which calls `uv run python -u sync.py` directly) is simpler and does not require Docker.
 
 ### Kubernetes
 
