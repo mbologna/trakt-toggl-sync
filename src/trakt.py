@@ -53,7 +53,8 @@ class TraktAPI:
         print(f"[{timestamp()}] Visit {device_data['verification_url']} and enter the code: {device_data['user_code']}")
         sys.stdout.flush()
 
-        while True:
+        deadline = time.time() + device_data["expires_in"]
+        while time.time() < deadline:
             time.sleep(device_data["interval"])
             response = requests.post(
                 f"{self.BASE_URL}/oauth/device/token",
@@ -67,13 +68,19 @@ class TraktAPI:
                 print(f"[{timestamp()}] Authentication successful!")
                 sys.stdout.flush()
                 return tokens
-            elif response.status_code in {400, 404, 410, 418, 429}:
+            elif response.status_code == 410:
+                print(f"[{timestamp()}] Device code expired.")
+                sys.stdout.flush()
+                break
+            elif response.status_code in {400, 404, 418, 429}:
                 print(f"[{timestamp()}] Waiting for user authentication...")
                 sys.stdout.flush()
             else:
                 print(f"[{timestamp()}] Authentication failed: {response.status_code}")
                 sys.stdout.flush()
                 break
+        else:
+            raise RuntimeError(f"[{timestamp()}] Authentication timed out after {device_data['expires_in']} seconds.")
         raise RuntimeError(f"[{timestamp()}] Authentication failed.")
 
     def refresh_token(self, refresh_token):
