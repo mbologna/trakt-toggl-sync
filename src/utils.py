@@ -11,8 +11,33 @@ def timestamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _parse_gcs_path(file_path):
+    """Parse a gs://bucket/object path into (bucket, blob_name)."""
+    path = file_path[len("gs://") :]
+    bucket, _, blob_name = path.partition("/")
+    return bucket, blob_name
+
+
 def load_json_file(file_path):
-    """Load JSON data from file."""
+    """Load JSON data from a local path or gs:// URI."""
+    if file_path.startswith("gs://"):
+        from google.cloud import storage
+        from google.cloud.exceptions import NotFound
+
+        bucket_name, blob_name = _parse_gcs_path(file_path)
+        try:
+            client = storage.Client()
+            blob = client.bucket(bucket_name).blob(blob_name)
+            content = blob.download_as_text().strip()
+            if not content:
+                return None
+            return json.loads(content)
+        except NotFound:
+            return None
+        except (json.JSONDecodeError, ValueError):
+            print(f"[{timestamp()}] Warning: Invalid token file, will re-authenticate")
+            return None
+
     if os.path.exists(file_path):
         try:
             with open(file_path) as f:
@@ -28,7 +53,16 @@ def load_json_file(file_path):
 
 
 def save_json_file(file_path, data):
-    """Save JSON data to file with restricted permissions."""
+    """Save JSON data to a local path or gs:// URI."""
+    if file_path.startswith("gs://"):
+        from google.cloud import storage
+
+        bucket_name, blob_name = _parse_gcs_path(file_path)
+        client = storage.Client()
+        blob = client.bucket(bucket_name).blob(blob_name)
+        blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+        return
+
     # Ensure directory exists
     os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
     with open(file_path, "w") as f:

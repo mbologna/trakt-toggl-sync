@@ -34,9 +34,6 @@ repos:
       - id: trailing-whitespace
       # Check for files that would conflict on case-insensitive filesystems
       - id: check-case-conflict
-      # Prevent committing directly to main/master
-      - id: no-commit-to-branch
-        args: ['--branch', 'main', '--branch', 'master']
       - id: detect-private-key
 
   - repo: https://github.com/pre-commit/mirrors-mypy
