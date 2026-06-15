@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   python:
-    uses: mbologna/.github/.github/workflows/python-ci.yml@eb320780c9de8219fe831960e9c225c60b338bab # main
+    uses: mbologna/.github/.github/workflows/python-ci.yml@eeab720b08ce458869bd18ad8a33cd50e9fb82bf # main
     with:
       python_version: "3.14"
       use_uv: true
@@ -30,7 +30,7 @@ jobs:
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@eb320780c9de8219fe831960e9c225c60b338bab # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@eeab720b08ce458869bd18ad8a33cd50e9fb82bf # main
     with:
       image_name: trakt-toggl-sync
       push_to_dockerhub: true
@@ -42,7 +42,7 @@ jobs:
   auto-release:
     if: github.event_name == 'schedule'
     needs: [docker]
-    uses: mbologna/.github/.github/workflows/auto-release.yml@b76cd3762a1b6787ae79e88f7c012b2dc848f325 # main
+    uses: mbologna/.github/.github/workflows/auto-release.yml@eeab720b08ce458869bd18ad8a33cd50e9fb82bf # main
     with:
       strategy: docker
       image: docker.io/mbologna/trakt-toggl-sync
@@ -51,7 +51,7 @@ jobs:
   deploy:
     needs: [docker]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
-    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@eb320780c9de8219fe831960e9c225c60b338bab # main
+    uses: mbologna/.github/.github/workflows/gcp-deploy.yml@eeab720b08ce458869bd18ad8a33cd50e9fb82bf # main
     with:
       image_name: trakt-toggl-sync
       deploy_type: service
