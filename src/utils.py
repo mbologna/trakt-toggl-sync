@@ -34,7 +34,7 @@ def load_json_file(file_path):
             return json.loads(content)
         except NotFound:
             return None
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             print(f"[{timestamp()}] Warning: Invalid token file, will re-authenticate")
             return None
 
@@ -45,7 +45,7 @@ def load_json_file(file_path):
                 if not content:  # Empty file
                     return None
                 return json.loads(content)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             # Invalid or empty JSON file
             print(f"[{timestamp()}] Warning: Invalid token file, will re-authenticate")
             return None
