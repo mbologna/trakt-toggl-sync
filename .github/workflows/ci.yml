@@ -31,7 +31,7 @@ jobs:
 
   docker:
     needs: python
-    uses: mbologna/.github/.github/workflows/docker-ci.yml@17e62b3f3f9e7985d155f652d47162ffada15cb6 # main
+    uses: mbologna/.github/.github/workflows/docker-ci.yml@b9144ddda9cdf36ebba426f1314b544d5245e7ac # main
     with:
       image_name: trakt-toggl-sync
       push_to_dockerhub: true
