@@ -2,6 +2,8 @@
 
 > Automatically sync Trakt viewing history to Toggl for complete time tracking
 
+> **⚠️ Trakt API access note (August 2026):** developers have reported that existing Trakt API applications disappeared without notice, and that creating a new one now requires a paid Trakt VIP subscription ([Reddit thread](https://www.reddit.com/r/trakt/comments/1vb2gyc/api_deleted_vip_required_to_be_a_developer_now/), [Trakt forum report](https://forums.trakt.tv/t/unable-to-create-a-new-api-application-after-purchasing-trakt-vip-the-create-button-does-nothing/119966)). Trakt hasn't published an official policy statement, so it's unclear whether this is permanent. If you don't have Trakt VIP and can't create an API application, see [jellyfin-toggl-sync](https://github.com/mbologna/jellyfin-toggl-sync), a sibling project with the same purpose that reads watch history from a self-hosted Jellyfin server instead of Trakt, no API application or subscription needed.
+
 ## Motivation
 
 I use Toggl for holistic time management, tracking work, projects, and personal activities. However, entertainment time was missing from this picture.
