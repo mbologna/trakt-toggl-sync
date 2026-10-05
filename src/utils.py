@@ -74,7 +74,6 @@ def check_required_env_variables():
     """Validate all required environment variables are set."""
     required_env_vars = [
         "TRAKT_CLIENT_ID",
-        "TRAKT_CLIENT_SECRET",
         "TOGGL_API_TOKEN",
         "TOGGL_WORKSPACE_ID",
         "TOGGL_PROJECT_ID",

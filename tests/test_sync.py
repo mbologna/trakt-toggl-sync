@@ -77,7 +77,6 @@ class TestCheckRequiredEnvVariables:
     def test_exits_when_variable_missing(self):
         required = [
             "TRAKT_CLIENT_ID",
-            "TRAKT_CLIENT_SECRET",
             "TOGGL_API_TOKEN",
             "TOGGL_WORKSPACE_ID",
             "TOGGL_PROJECT_ID",
@@ -90,7 +89,6 @@ class TestCheckRequiredEnvVariables:
     def test_passes_when_all_present(self):
         env = {
             "TRAKT_CLIENT_ID": "id",
-            "TRAKT_CLIENT_SECRET": "secret",
             "TOGGL_API_TOKEN": "token",
             "TOGGL_WORKSPACE_ID": "123",
             "TOGGL_PROJECT_ID": "456",
@@ -104,25 +102,25 @@ class TestTraktAPI:
 
     def test_is_token_near_expiration_expired(self):
         """Test token expiration check for expired token."""
-        api = TraktAPI("client_id", "client_secret", "token.json")
+        api = TraktAPI("client_id", "token.json")
         expired_time = (datetime.now() - timedelta(hours=1)).isoformat()
         assert api.is_token_near_expiration(expired_time) is True
 
     def test_is_token_near_expiration_valid(self):
         """Test token expiration check for valid token."""
-        api = TraktAPI("client_id", "client_secret", "token.json")
+        api = TraktAPI("client_id", "token.json")
         future_time = (datetime.now() + timedelta(hours=2)).isoformat()
         assert api.is_token_near_expiration(future_time) is False
 
     def test_get_headers_without_token(self):
-        api = TraktAPI("my_client_id", "secret", "tokens.json")
+        api = TraktAPI("my_client_id", "tokens.json")
         headers = api._get_headers()
         assert headers["trakt-api-key"] == "my_client_id"
         assert headers["trakt-api-version"] == "2"
         assert "Authorization" not in headers
 
     def test_get_headers_with_token(self):
-        api = TraktAPI("my_client_id", "secret", "tokens.json")
+        api = TraktAPI("my_client_id", "tokens.json")
         headers = api._get_headers(access_token="mytoken")
         assert headers["Authorization"] == "Bearer mytoken"
 
@@ -146,114 +144,90 @@ class TestTraktAPI:
 
 
 class TestTraktAuthenticate:
-    """Test TraktAPI.authenticate() — device code OAuth flow."""
+    """Test TraktAPI.authenticate() — PKCE OAuth flow."""
 
     def _make_api(self, tmp_path):
-        return TraktAPI("client_id", "client_secret", str(tmp_path / "tokens.json"))
+        return TraktAPI("client_id", str(tmp_path / "tokens.json"))
 
-    def _device_data(self, expires_in=600):
-        return {
-            "user_code": "ABCD1234",
-            "device_code": "device_code_123",
-            "verification_url": "https://trakt.tv/activate",
-            "interval": 0,
-            "expires_in": expires_in,
-        }
+    def test_generate_pkce_pair_is_well_formed(self, tmp_path):
+        """code_verifier length is within spec and code_challenge is its S256 hash."""
+        import base64
+        import hashlib
+
+        verifier, challenge = TraktAPI._generate_pkce_pair()
+        assert 43 <= len(verifier) <= 128
+        expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
+        assert challenge == expected
 
     def test_authenticate_success(self, tmp_path):
-        """Successful auth on first poll returns tokens and saves the token file."""
+        """Receives the code via the local callback server, exchanges it, and saves the token file."""
         api = self._make_api(tmp_path)
-        device_mock = Mock()
-        device_mock.json.return_value = self._device_data()
-
         token_mock = Mock()
-        token_mock.status_code = 200
         token_mock.json.return_value = {"access_token": "acc", "refresh_token": "ref", "expires_in": 7776000}
 
-        with patch("requests.post", side_effect=[device_mock, token_mock]):
-            tokens = api.authenticate()
+        fake_httpd = Mock()
+        fake_httpd.auth_code = None
+        fake_httpd.auth_error = None
+
+        def _simulate_callback():
+            fake_httpd.auth_code = "auth_code_123"
+
+        fake_httpd.handle_request.side_effect = _simulate_callback
+
+        with patch("requests.post", return_value=token_mock) as mock_post:
+            with patch.object(api, "_start_callback_server", return_value=fake_httpd):
+                with patch("webbrowser.open"):
+                    tokens = api.authenticate()
 
         assert tokens["access_token"] == "acc"
         assert "expires_at" in tokens
         saved = json.loads((tmp_path / "tokens.json").read_text())
         assert saved["access_token"] == "acc"
+        fake_httpd.handle_request.assert_called_once()
+        fake_httpd.server_close.assert_called_once()
 
-    def test_authenticate_polls_through_pending_then_succeeds(self, tmp_path):
-        """400 (pending) responses are retried until success."""
+        sent_json = mock_post.call_args.kwargs["json"]
+        assert sent_json["code"] == "auth_code_123"
+        assert sent_json["grant_type"] == "authorization_code"
+        assert "code_verifier" in sent_json
+        assert "client_secret" not in sent_json
+
+    def test_authenticate_raises_when_no_code_received(self, tmp_path):
+        """If the callback server never gets a code, authenticate() raises instead of hanging."""
         api = self._make_api(tmp_path)
-        device_mock = Mock()
-        device_mock.json.return_value = self._device_data()
+        fake_httpd = Mock()
+        fake_httpd.auth_code = None
+        fake_httpd.auth_error = None
 
-        pending = Mock()
-        pending.status_code = 400
-        success = Mock()
-        success.status_code = 200
-        success.json.return_value = {"access_token": "acc", "refresh_token": "ref", "expires_in": 7776000}
+        with patch.object(api, "_start_callback_server", return_value=fake_httpd):
+            with patch("webbrowser.open"):
+                with pytest.raises(RuntimeError, match="Authentication failed"):
+                    api.authenticate(auth_timeout=0.05)
 
-        with patch("requests.post", side_effect=[device_mock, pending, pending, success]):
-            tokens = api.authenticate()
-
-        assert tokens["access_token"] == "acc"
-
-    def test_authenticate_timeout_when_expires_immediately(self, tmp_path):
-        """When expires_in=0 the loop never runs and raises a timed-out RuntimeError."""
+    def test_authenticate_raises_on_http_error(self, tmp_path):
+        """A failed code exchange propagates the HTTPError."""
         api = self._make_api(tmp_path)
-        device_mock = Mock()
-        device_mock.json.return_value = self._device_data(expires_in=0)
+        error_response = Mock()
+        error_response.status_code = 400
+        http_error = requests.exceptions.HTTPError(response=error_response)
 
-        with patch("requests.post", return_value=device_mock):
-            with pytest.raises(RuntimeError, match="timed out"):
-                api.authenticate()
+        fake_httpd = Mock()
+        fake_httpd.auth_code = "bad_code"
+        fake_httpd.auth_error = None
 
-    def test_authenticate_410_breaks_immediately(self, tmp_path):
-        """410 (device code expired on server) stops polling and raises RuntimeError."""
-        api = self._make_api(tmp_path)
-        device_mock = Mock()
-        device_mock.json.return_value = self._device_data()
-
-        expired_mock = Mock()
-        expired_mock.status_code = 410
-
-        with patch("requests.post", side_effect=[device_mock, expired_mock]):
-            with pytest.raises(RuntimeError, match="Authentication failed"):
-                api.authenticate()
-
-    def test_authenticate_unexpected_status_raises(self, tmp_path):
-        """An unrecognised HTTP status breaks the loop and raises RuntimeError."""
-        api = self._make_api(tmp_path)
-        device_mock = Mock()
-        device_mock.json.return_value = self._device_data()
-
-        error_mock = Mock()
-        error_mock.status_code = 500
-
-        with patch("requests.post", side_effect=[device_mock, error_mock]):
-            with pytest.raises(RuntimeError, match="Authentication failed"):
-                api.authenticate()
-
-    def test_authenticate_418_is_treated_as_pending(self, tmp_path):
-        """418 (denied / slow-down variants) keeps polling; eventually succeeds."""
-        api = self._make_api(tmp_path)
-        device_mock = Mock()
-        device_mock.json.return_value = self._device_data()
-
-        denied = Mock()
-        denied.status_code = 418
-        success = Mock()
-        success.status_code = 200
-        success.json.return_value = {"access_token": "acc", "refresh_token": "ref", "expires_in": 7776000}
-
-        with patch("requests.post", side_effect=[device_mock, denied, success]):
-            tokens = api.authenticate()
-
-        assert tokens["access_token"] == "acc"
+        with patch("requests.post") as mock_post:
+            mock_post.return_value.raise_for_status.side_effect = http_error
+            with patch.object(api, "_start_callback_server", return_value=fake_httpd):
+                with patch("webbrowser.open"):
+                    with pytest.raises(requests.exceptions.HTTPError):
+                        api.authenticate()
 
 
 class TestTraktRefreshToken:
     """Test TraktAPI.refresh_token()."""
 
     def _make_api(self, tmp_path):
-        return TraktAPI("client_id", "client_secret", str(tmp_path / "tokens.json"))
+        return TraktAPI("client_id", str(tmp_path / "tokens.json"))
 
     def test_refresh_token_success(self, tmp_path):
         api = self._make_api(tmp_path)
@@ -609,6 +583,22 @@ class TestSyncProcessHistoryItem:
             process_history_item(self._episode_item(), toggl, sync_state, state_file)
 
         assert sync_state["episode:10"] == 888
+
+    def test_handles_null_runtime(self, tmp_path):
+        """Trakt sometimes returns runtime: null (not missing) for older titles."""
+        from sync import process_history_item
+
+        toggl = self._make_toggl()
+        state_file = str(tmp_path / "state.json")
+        sync_state = {}
+        item = self._movie_item()
+        item["movie"]["runtime"] = None
+
+        with patch.object(toggl, "create_entry", return_value=1) as mock_create:
+            process_history_item(item, toggl, sync_state, state_file)
+
+        mock_create.assert_called_once()
+        assert mock_create.call_args.kwargs["start_time"].startswith("2025-01-01T12:00:00")
 
     def test_updates_existing_state_entry(self, tmp_path):
         """If state already has an id for this item, update_entry is called instead."""
