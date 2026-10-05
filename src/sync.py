@@ -104,8 +104,11 @@ def main():
     start_date = (datetime.now() - timedelta(days=TRAKT_HISTORY_DAYS)).isoformat() + "Z"
     history = trakt.fetch_history(tokens["access_token"], start_date)
 
-    # Pre-fetch Toggl entries for the same date range to improve duplicate detection
-    start_date_str = (datetime.now() - timedelta(days=TRAKT_HISTORY_DAYS)).strftime("%Y-%m-%d")
+    # Pre-fetch Toggl entries for the same date range to improve duplicate detection.
+    # Toggl's API rejects start_date values older than ~90 days, so clamp to that
+    # regardless of TRAKT_HISTORY_DAYS — Toggl itself can't look back further anyway.
+    toggl_lookback_days = min(TRAKT_HISTORY_DAYS, 89)
+    start_date_str = (datetime.now() - timedelta(days=toggl_lookback_days)).strftime("%Y-%m-%d")
     toggl.get_cached_entries(start_date=start_date_str, force_refresh=True)
 
     sync_state = load_json_file(SYNC_STATE_FILE) or {}
