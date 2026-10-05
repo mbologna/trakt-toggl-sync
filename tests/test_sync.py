@@ -465,7 +465,8 @@ class TestTogglCreateEntry:
         mock_post.assert_not_called()
         assert result == 42
 
-    def test_create_entry_402_sets_rate_limited_and_raises(self):
+    def test_create_entry_402_retries_then_raises_after_max_attempts(self):
+        """Persistent 402s are retried with backoff before finally giving up."""
         api = self._make_api()
         error_response = Mock()
         error_response.status_code = 402
@@ -473,10 +474,33 @@ class TestTogglCreateEntry:
 
         with patch("requests.post") as mock_post:
             mock_post.return_value.raise_for_status.side_effect = http_error
-            with pytest.raises(requests.exceptions.HTTPError):
-                api.create_entry("Test Movie", "2025-01-01T10:00:00Z", "2025-01-01T12:00:00Z")
+            with patch("time.sleep") as mock_sleep:
+                with pytest.raises(requests.exceptions.HTTPError):
+                    api.create_entry("Test Movie", "2025-01-01T10:00:00Z", "2025-01-01T12:00:00Z")
 
         assert api._rate_limited is True
+        assert mock_post.call_count == api.RATE_LIMIT_MAX_RETRIES + 1
+        assert mock_sleep.call_count == api.RATE_LIMIT_MAX_RETRIES
+
+    def test_create_entry_402_then_recovers(self):
+        """A transient 402 followed by success returns the created entry's id."""
+        api = self._make_api()
+        error_response = Mock()
+        error_response.status_code = 402
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        rate_limited_response = Mock()
+        rate_limited_response.raise_for_status.side_effect = http_error
+        success_response = Mock()
+        success_response.json.return_value = {"id": 999}
+
+        with patch("requests.post", side_effect=[rate_limited_response, success_response]):
+            with patch("time.sleep") as mock_sleep:
+                entry_id = api.create_entry("Test Movie", "2025-01-01T10:00:00Z", "2025-01-01T12:00:00Z")
+
+        assert entry_id == 999
+        assert api._rate_limited is False
+        mock_sleep.assert_called_once_with(api.RATE_LIMIT_RETRY_DELAY_SECONDS)
 
 
 class TestTogglUpdateEntry:
@@ -509,7 +533,8 @@ class TestTogglUpdateEntry:
 
         assert result is None
 
-    def test_update_entry_402_sets_rate_limited_and_raises(self):
+    def test_update_entry_402_retries_then_raises_after_max_attempts(self):
+        """Persistent 402s are retried with backoff before finally giving up."""
         api = self._make_api()
         error_response = Mock()
         error_response.status_code = 402
@@ -517,10 +542,13 @@ class TestTogglUpdateEntry:
 
         with patch("requests.put") as mock_put:
             mock_put.return_value.raise_for_status.side_effect = http_error
-            with pytest.raises(requests.exceptions.HTTPError):
-                api.update_entry(42, "Test Movie", "2025-01-01T10:00:00Z", "2025-01-01T12:00:00Z")
+            with patch("time.sleep") as mock_sleep:
+                with pytest.raises(requests.exceptions.HTTPError):
+                    api.update_entry(42, "Test Movie", "2025-01-01T10:00:00Z", "2025-01-01T12:00:00Z")
 
         assert api._rate_limited is True
+        assert mock_put.call_count == api.RATE_LIMIT_MAX_RETRIES + 1
+        assert mock_sleep.call_count == api.RATE_LIMIT_MAX_RETRIES
 
 
 class TestSyncProcessHistoryItem:
