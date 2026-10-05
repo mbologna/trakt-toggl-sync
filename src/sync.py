@@ -16,7 +16,6 @@ load_dotenv()
 
 # Configuration
 TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
-TRAKT_CLIENT_SECRET = os.getenv("TRAKT_CLIENT_SECRET")
 TRAKT_HISTORY_DAYS = int(os.getenv("TRAKT_HISTORY_DAYS", 7))
 TOGGL_API_TOKEN = os.getenv("TOGGL_API_TOKEN")
 TOGGL_WORKSPACE_ID = int(v) if (v := os.getenv("TOGGL_WORKSPACE_ID")) is not None else None
@@ -42,11 +41,11 @@ def process_history_item(item, toggl_api, sync_state, state_file):
             f"S{item['episode']['season']:02}E{item['episode']['number']:02} - "
             f"{item['episode']['title']}"
         )
-        runtime = item["episode"]["runtime"]
+        runtime = item["episode"].get("runtime") or 0
         state_key = f"episode:{item['episode']['ids']['trakt']}"
     else:
         title = f"🎞️ {item['movie']['title']} ({item['movie'].get('year', 'N/A')})"
-        runtime = item["movie"].get("runtime", 0)
+        runtime = item["movie"].get("runtime") or 0
         state_key = f"movie:{item['movie']['ids']['trakt']}"
 
     end_time = datetime.fromisoformat(watched_at[:-1])
@@ -78,7 +77,7 @@ def main():
     check_required_env_variables()
 
     # Initialize API clients
-    trakt = TraktAPI(TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET, TRAKT_TOKEN_FILE)
+    trakt = TraktAPI(TRAKT_CLIENT_ID, TRAKT_TOKEN_FILE)
     toggl = TogglAPI(TOGGL_API_TOKEN, TOGGL_WORKSPACE_ID, TOGGL_PROJECT_ID, TOGGL_TAGS)
 
     # Handle Trakt authentication

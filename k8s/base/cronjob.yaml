@@ -58,11 +58,6 @@ spec:
                 secretKeyRef:
                   name: trakt-toggl-credentials
                   key: TRAKT_CLIENT_ID
-            - name: TRAKT_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: trakt-toggl-credentials
-                  key: TRAKT_CLIENT_SECRET
             - name: TOGGL_API_TOKEN
               valueFrom:
                 secretKeyRef:

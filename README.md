@@ -2,7 +2,7 @@
 
 > Automatically sync Trakt viewing history to Toggl for complete time tracking
 
-> **⚠️ Trakt API access note (August 2026):** developers have reported that existing Trakt API applications disappeared without notice, and that creating a new one now requires a paid Trakt VIP subscription ([Reddit thread](https://www.reddit.com/r/trakt/comments/1vb2gyc/api_deleted_vip_required_to_be_a_developer_now/), [Trakt forum report](https://forums.trakt.tv/t/unable-to-create-a-new-api-application-after-purchasing-trakt-vip-the-create-button-does-nothing/119966)). Trakt hasn't published an official policy statement, so it's unclear whether this is permanent. If you don't have Trakt VIP and can't create an API application, see [jellyfin-toggl-sync](https://github.com/mbologna/jellyfin-toggl-sync), a sibling project with the same purpose that reads watch history from a self-hosted Jellyfin server instead of Trakt, no API application or subscription needed.
+> **Note:** Trakt re-enabled API application creation and now uses the [PKCE OAuth flow](https://developer.trakt.tv/docs/pkce) instead of the old device-code flow. No client secret is required anymore — only a client ID. When creating your app, set its **Redirect URI** to `https://127.0.0.1:8843/callback` — this must match exactly, or authentication will fail with `invalid_redirect`. During `authenticate()`, the script briefly runs a local HTTPS server (with a self-signed certificate) on that port to receive the authorization code automatically; your browser will show a one-time certificate warning that's safe to click through.
 
 ## Motivation
 
@@ -90,7 +90,6 @@ Edit `.env`:
 ```env
 # Trakt
 TRAKT_CLIENT_ID=your_client_id
-TRAKT_CLIENT_SECRET=your_client_secret
 TRAKT_HISTORY_DAYS=7
 
 # Toggl
@@ -143,7 +142,6 @@ cp k8s/base/secret-template.yaml k8s/secrets/secret.yaml
 # Edit k8s/secrets/configmap.yaml with your Toggl IDs
 # Edit k8s/secrets/secret.yaml with base64-encoded API credentials:
 echo -n "your_trakt_client_id" | base64
-echo -n "your_trakt_client_secret" | base64
 echo -n "your_toggl_api_token" | base64
 ```
 
@@ -163,17 +161,17 @@ kubectl apply -f k8s/base/cronjob.yaml
 
 **Step 3: Initial token setup (first time only)**
 
-Since the CronJob won't have authentication tokens yet, you have to manually trigger the first job and authenticate interactively:
+Trakt's PKCE flow redirects to a local HTTPS server on the machine running the script (`https://127.0.0.1:8843/callback`), so it can't complete from inside a headless pod. Authenticate locally first, then copy the resulting token file onto the PVC:
 
 ```bash
-# Create a one-time job from the cronjob
-kubectl create job --from=cronjob/trakt-toggl-sync trakt-sync-initial -n trakt-toggl
+# Authenticate locally — opens your browser to approve, then saves .trakt_tokens.json
+make run
 
-# Watch the logs
-kubectl logs -f job/trakt-sync-initial -n trakt-toggl
-
-# Follow the authentication URL shown in the logs
-# Once authenticated, the token will be saved to the PVC
+# Copy the token file onto the PVC via a temporary pod
+kubectl run -it --rm token-copy -n trakt-toggl --image=busybox --restart=Never \
+  --overrides='{"spec":{"containers":[{"name":"token-copy","image":"busybox","command":["sleep","60"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"trakt-tokens-pvc"}}]}}' &
+sleep 5
+kubectl cp .trakt_tokens.json trakt-toggl/token-copy:/data/.trakt_tokens.json
 ```
 
 #### Automation via CronJob
@@ -277,7 +275,6 @@ make test-e2e-setup
 
 # 3. Export the environment variables shown (example):
 export E2E_TRAKT_CLIENT_ID="your_client_id"
-export E2E_TRAKT_CLIENT_SECRET="your_client_secret"
 export E2E_TRAKT_ACCESS_TOKEN="token_from_json"
 export E2E_TRAKT_REFRESH_TOKEN="token_from_json"
 export E2E_TOGGL_API_TOKEN="your_api_token"

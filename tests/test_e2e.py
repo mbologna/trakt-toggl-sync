@@ -9,7 +9,6 @@ Setup Instructions:
 3. This creates .trakt_tokens.json with valid tokens
 4. Set environment variables from that file:
    export E2E_TRAKT_CLIENT_ID="your_client_id"
-   export E2E_TRAKT_CLIENT_SECRET="your_client_secret"
    export E2E_TRAKT_ACCESS_TOKEN="$(jq -r .access_token .trakt_tokens.json)"
    export E2E_TRAKT_REFRESH_TOKEN="$(jq -r .refresh_token .trakt_tokens.json)"
 5. Set Toggl credentials:
@@ -45,12 +44,11 @@ pytestmark = pytest.mark.skipif(
 def trakt_credentials():
     """Get Trakt credentials from environment."""
     client_id = os.getenv("E2E_TRAKT_CLIENT_ID")
-    client_secret = os.getenv("E2E_TRAKT_CLIENT_SECRET")
 
-    if not client_id or not client_secret:
+    if not client_id:
         pytest.skip("E2E Trakt credentials not configured")
 
-    return {"client_id": client_id, "client_secret": client_secret}
+    return {"client_id": client_id}
 
 
 @pytest.fixture(scope="session")
@@ -58,7 +56,6 @@ def trakt_api(trakt_credentials):
     """Create TraktAPI client with test credentials."""
     return TraktAPI(
         trakt_credentials["client_id"],
-        trakt_credentials["client_secret"],
         "/tmp/e2e_trakt_tokens.json",
     )
 
