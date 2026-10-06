@@ -60,10 +60,15 @@ class TraktAPI:
     REDIRECT_URI = f"https://127.0.0.1:{REDIRECT_PORT}/callback"
     DEFAULT_TIMEOUT = (3.05, 10)
 
-    def __init__(self, client_id, token_file):
+    def __init__(self, client_id, token_file, redirect_uri=None):
         self.client_id = client_id
         self.token_file = token_file
         self.token_expiration_buffer = 60  # minutes
+        # Defaults to the local-loopback callback server's URI (used by the
+        # local authenticate() flow below); server.py overrides this to the
+        # Cloud Run service's own URL for the browser-based GCP OAuth flow,
+        # since it must exactly match whatever's registered on the Trakt app.
+        self.redirect_uri = redirect_uri or self.REDIRECT_URI
 
     def _get_headers(self, access_token=None):
         """Get API headers with optional authorization."""
@@ -97,7 +102,7 @@ class TraktAPI:
             json={
                 "code": code,
                 "client_id": self.client_id,
-                "redirect_uri": self.REDIRECT_URI,
+                "redirect_uri": self.redirect_uri,
                 "grant_type": "authorization_code",
                 "code_verifier": code_verifier,
             },
@@ -165,7 +170,7 @@ class TraktAPI:
         code_verifier, code_challenge = self._generate_pkce_pair()
         params = {
             "client_id": self.client_id,
-            "redirect_uri": self.REDIRECT_URI,
+            "redirect_uri": self.redirect_uri,
             "response_type": "code",
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",

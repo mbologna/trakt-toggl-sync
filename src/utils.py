@@ -70,6 +70,23 @@ def save_json_file(file_path, data):
     os.chmod(file_path, 0o600)
 
 
+def delete_json_file(file_path):
+    """Delete a JSON file at a local path or gs:// URI. No-op if it doesn't exist."""
+    if file_path.startswith("gs://"):
+        from google.cloud import storage
+        from google.cloud.exceptions import NotFound
+
+        bucket_name, blob_name = _parse_gcs_path(file_path)
+        try:
+            storage.Client().bucket(bucket_name).blob(blob_name).delete()
+        except NotFound:
+            pass
+        return
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
 def check_required_env_variables():
     """Validate all required environment variables are set."""
     required_env_vars = [
