@@ -574,6 +574,75 @@ class TestTogglUpdateEntry:
         assert mock_sleep.call_count == api.RATE_LIMIT_MAX_RETRIES
 
 
+class TestSyncHistory:
+    """Test sync.sync_history()'s graceful stop on rate limits and network errors."""
+
+    def _make_toggl(self):
+        api = TogglAPI("token", 123, 456, ["trakt"])
+        api._cached_entries = []
+        api._cache_timestamp = time.time()
+        return api
+
+    def test_processes_all_items_on_success(self, tmp_path):
+        from sync import sync_history
+
+        toggl = self._make_toggl()
+        state_file = str(tmp_path / "state.json")
+        history = [
+            {"type": "movie", "watched_at": "2025-01-01T12:00:00.000Z", "movie": {"title": "A", "ids": {"trakt": 1}}},
+            {"type": "movie", "watched_at": "2025-01-02T12:00:00.000Z", "movie": {"title": "B", "ids": {"trakt": 2}}},
+        ]
+
+        with patch.object(toggl, "create_entry", side_effect=[111, 222]) as mock_create:
+            sync_history(history, toggl, {}, state_file)
+
+        assert mock_create.call_count == 2
+
+    def test_stops_gracefully_on_402(self, tmp_path):
+        from sync import sync_history
+
+        toggl = self._make_toggl()
+        state_file = str(tmp_path / "state.json")
+        history = [
+            {"type": "movie", "watched_at": "2025-01-01T12:00:00.000Z", "movie": {"title": "A", "ids": {"trakt": 1}}},
+        ]
+        error_response = Mock()
+        error_response.status_code = 402
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch.object(toggl, "create_entry", side_effect=http_error):
+            sync_history(history, toggl, {}, state_file)  # must not raise
+
+    def test_reraises_non_402_http_error(self, tmp_path):
+        from sync import sync_history
+
+        toggl = self._make_toggl()
+        state_file = str(tmp_path / "state.json")
+        history = [
+            {"type": "movie", "watched_at": "2025-01-01T12:00:00.000Z", "movie": {"title": "A", "ids": {"trakt": 1}}},
+        ]
+        error_response = Mock()
+        error_response.status_code = 500
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch.object(toggl, "create_entry", side_effect=http_error):
+            with pytest.raises(requests.exceptions.HTTPError):
+                sync_history(history, toggl, {}, state_file)
+
+    def test_stops_gracefully_on_network_error(self, tmp_path):
+        """A transient network error (timeout, connection reset) must not crash the run."""
+        from sync import sync_history
+
+        toggl = self._make_toggl()
+        state_file = str(tmp_path / "state.json")
+        history = [
+            {"type": "movie", "watched_at": "2025-01-01T12:00:00.000Z", "movie": {"title": "A", "ids": {"trakt": 1}}},
+        ]
+
+        with patch.object(toggl, "create_entry", side_effect=requests.exceptions.ReadTimeout("timed out")):
+            sync_history(history, toggl, {}, state_file)  # must not raise
+
+
 class TestSyncProcessHistoryItem:
     """Test sync.process_history_item() for movies and episodes."""
 

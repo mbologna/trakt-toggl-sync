@@ -115,9 +115,17 @@ def main():
 
     print(f"[{timestamp()}] Processing {len(history)} entries...")
     sys.stdout.flush()
+    sync_history(history, toggl, sync_state, SYNC_STATE_FILE)
+
+    print(f"\n[{timestamp()}] ===== Sync Complete =====")
+    sys.stdout.flush()
+
+
+def sync_history(history, toggl, sync_state, state_file):
+    """Process each history item, stopping gracefully on rate limits or network errors."""
     try:
         for item in history:
-            process_history_item(item, toggl, sync_state, SYNC_STATE_FILE)
+            process_history_item(item, toggl, sync_state, state_file)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 402:
             print(f"[{timestamp()}] ⚠ Sync stopped due to rate limits.")
@@ -125,9 +133,10 @@ def main():
             sys.stdout.flush()
         else:
             raise
-
-    print(f"\n[{timestamp()}] ===== Sync Complete =====")
-    sys.stdout.flush()
+    except requests.exceptions.RequestException as e:
+        print(f"[{timestamp()}] ⚠ Sync stopped due to a network error: {e}")
+        print(f"[{timestamp()}] Run again later to sync remaining entries.")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
