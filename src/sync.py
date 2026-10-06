@@ -62,6 +62,9 @@ def process_history_item(item, toggl_api, sync_state, state_file):
             print(f"[{timestamp()}] State entry gone from Toggl, recreating: {title}")
 
     if new_id is None:
+        if toggl_api.has_overlapping_entry(watched_at, runtime):
+            print(f"[{timestamp()}] Skipped (already logged via Jellyfin): {title}")
+            return
         new_id = toggl_api.create_entry(description=title, start_time=start_iso, end_time=watched_at)
 
     if new_id and sync_state.get(state_key) != new_id:
@@ -105,9 +108,9 @@ def main():
     history = trakt.fetch_history(tokens["access_token"], start_date)
 
     # Pre-fetch Toggl entries for the same date range to improve duplicate detection.
-    # Toggl's API rejects start_date values older than ~90 days, so clamp to that
-    # regardless of TRAKT_HISTORY_DAYS — Toggl itself can't look back further anyway.
-    toggl_lookback_days = min(TRAKT_HISTORY_DAYS, 89)
+    # get_cached_entries() uses the Reports API here, which has no ~90-day floor
+    # like the core API — just clamp to its own per-request span cap (366 days).
+    toggl_lookback_days = min(TRAKT_HISTORY_DAYS, 365)
     start_date_str = (datetime.now() - timedelta(days=toggl_lookback_days)).strftime("%Y-%m-%d")
     toggl.get_cached_entries(start_date=start_date_str, force_refresh=True)
 
