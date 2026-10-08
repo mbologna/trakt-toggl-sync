@@ -22,6 +22,13 @@ import uuid
 PORT = int(os.environ.get("PORT", 8080))
 SYNC_SHARED_SECRET = os.environ.get("SYNC_SHARED_SECRET", "")
 PKCE_STATE_BUCKET = os.environ.get("PKCE_STATE_BUCKET", "")
+# The service's own public URL (e.g. https://trakt-toggl-sync-xyz.a.run.app),
+# used to build the OAuth redirect_uri. Deliberately not derived from the
+# request's Host header — that's client-controlled and building a
+# security-sensitive URL from it would let a spoofed Host redirect the PKCE
+# flow elsewhere (Trakt's own redirect_uri validation is the only other
+# backstop, and relying solely on a third party for this isn't good practice).
+SERVICE_BASE_URL = os.environ.get("SERVICE_BASE_URL", "").rstrip("/")
 
 
 def _secret_matches(provided):
@@ -83,8 +90,11 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
         if not _secret_matches(query.get("secret", [None])[0]):
             self._respond(403, "forbidden")
             return
+        if not SERVICE_BASE_URL:
+            self._respond(500, "SERVICE_BASE_URL not configured")
+            return
 
-        redirect_uri = f"https://{self.headers.get('Host')}/oauth/callback"
+        redirect_uri = f"{SERVICE_BASE_URL}/oauth/callback"
         code_verifier, code_challenge = TraktAPI._generate_pkce_pair()
         verifier_id = uuid.uuid4().hex
 
@@ -119,6 +129,9 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
         if not code or not verifier_id or not _secret_matches(secret):
             self._respond(403, "forbidden")
             return
+        if not SERVICE_BASE_URL:
+            self._respond(500, "SERVICE_BASE_URL not configured")
+            return
 
         verifier_path = f"gs://{PKCE_STATE_BUCKET}/pkce/{verifier_id}.json"
         stored = load_json_file(verifier_path)
@@ -130,7 +143,7 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
             trakt = TraktAPI(
                 os.environ["TRAKT_CLIENT_ID"],
                 os.environ["TRAKT_TOKEN_FILE"],
-                redirect_uri=f"https://{self.headers.get('Host')}/oauth/callback",
+                redirect_uri=f"{SERVICE_BASE_URL}/oauth/callback",
             )
             trakt._exchange_code_for_tokens(code, stored["code_verifier"])
         except Exception as e:

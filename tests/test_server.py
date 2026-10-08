@@ -24,6 +24,7 @@ def _make_handler(path, headers=None):
 def _secret(monkeypatch):
     monkeypatch.setattr(server, "SYNC_SHARED_SECRET", "s3cret")
     monkeypatch.setattr(server, "PKCE_STATE_BUCKET", "test-bucket")
+    monkeypatch.setattr(server, "SERVICE_BASE_URL", "https://svc.example.com")
 
 
 class TestSyncEndpoint:
@@ -67,13 +68,13 @@ class TestSyncEndpoint:
 
 class TestOAuthAuthorize:
     def test_rejects_missing_secret(self):
-        handler = _make_handler("/oauth/authorize", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/authorize", headers={"Host": "evil.example.com"})
         handler.do_GET()
         handler.send_response.assert_called_once_with(403)
 
     def test_redirects_to_trakt_with_state_and_saves_verifier(self, monkeypatch):
         monkeypatch.setenv("TRAKT_CLIENT_ID", "client123")
-        handler = _make_handler("/oauth/authorize?secret=s3cret", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/authorize?secret=s3cret", headers={"Host": "evil.example.com"})
 
         with patch("utils.save_json_file") as mock_save:
             handler.do_GET()
@@ -81,6 +82,7 @@ class TestOAuthAuthorize:
         handler.send_response.assert_called_once_with(302)
         location = handler.send_header.call_args.args[1]
         assert location.startswith("https://trakt.tv/oauth/authorize?")
+        # Built from SERVICE_BASE_URL, not the (spoofed) Host header above.
         assert "redirect_uri=https%3A%2F%2Fsvc.example.com%2Foauth%2Fcallback" in location
         assert "state=s3cret%3A" in location
 
@@ -89,20 +91,32 @@ class TestOAuthAuthorize:
         assert saved_path.startswith("gs://test-bucket/pkce/")
         assert "code_verifier" in saved_data
 
+    def test_rejects_when_service_base_url_unconfigured(self, monkeypatch):
+        """redirect_uri must come from SERVICE_BASE_URL, never from the
+        client-controlled Host header — so with it unset, fail closed
+        rather than falling back to trusting Host."""
+        monkeypatch.setattr(server, "SERVICE_BASE_URL", "")
+        monkeypatch.setenv("TRAKT_CLIENT_ID", "client123")
+        handler = _make_handler("/oauth/authorize?secret=s3cret", headers={"Host": "evil.example.com"})
+
+        handler.do_GET()
+
+        handler.send_response.assert_called_once_with(500)
+
 
 class TestOAuthCallback:
     def test_rejects_missing_code(self):
-        handler = _make_handler("/oauth/callback?state=s3cret:abc", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/callback?state=s3cret:abc", headers={"Host": "evil.example.com"})
         handler.do_GET()
         handler.send_response.assert_called_once_with(403)
 
     def test_rejects_wrong_secret_in_state(self):
-        handler = _make_handler("/oauth/callback?code=abc&state=wrong:xyz", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/callback?code=abc&state=wrong:xyz", headers={"Host": "evil.example.com"})
         handler.do_GET()
         handler.send_response.assert_called_once_with(403)
 
     def test_rejects_unknown_verifier(self):
-        handler = _make_handler("/oauth/callback?code=abc&state=s3cret:xyz", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/callback?code=abc&state=s3cret:xyz", headers={"Host": "evil.example.com"})
         with patch("utils.load_json_file", return_value=None):
             handler.do_GET()
         handler.send_response.assert_called_once_with(400)
@@ -110,7 +124,7 @@ class TestOAuthCallback:
     def test_exchanges_code_and_cleans_up_on_success(self, monkeypatch):
         monkeypatch.setenv("TRAKT_CLIENT_ID", "client123")
         monkeypatch.setenv("TRAKT_TOKEN_FILE", "gs://test-bucket/trakt_tokens.json")
-        handler = _make_handler("/oauth/callback?code=abc123&state=s3cret:xyz", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/callback?code=abc123&state=s3cret:xyz", headers={"Host": "evil.example.com"})
 
         with patch("utils.load_json_file", return_value={"code_verifier": "verifier123"}):
             with patch("utils.delete_json_file") as mock_delete:
@@ -123,10 +137,18 @@ class TestOAuthCallback:
         mock_delete.assert_called_once_with("gs://test-bucket/pkce/xyz.json")
         handler.send_response.assert_called_once_with(200)
 
+    def test_rejects_when_service_base_url_unconfigured(self, monkeypatch):
+        monkeypatch.setattr(server, "SERVICE_BASE_URL", "")
+        handler = _make_handler("/oauth/callback?code=abc123&state=s3cret:xyz", headers={"Host": "evil.example.com"})
+
+        handler.do_GET()
+
+        handler.send_response.assert_called_once_with(500)
+
     def test_exchange_failure_returns_500(self, monkeypatch):
         monkeypatch.setenv("TRAKT_CLIENT_ID", "client123")
         monkeypatch.setenv("TRAKT_TOKEN_FILE", "gs://test-bucket/trakt_tokens.json")
-        handler = _make_handler("/oauth/callback?code=abc123&state=s3cret:xyz", headers={"Host": "svc.example.com"})
+        handler = _make_handler("/oauth/callback?code=abc123&state=s3cret:xyz", headers={"Host": "evil.example.com"})
 
         with patch("utils.load_json_file", return_value={"code_verifier": "verifier123"}):
             with patch("trakt.TraktAPI._exchange_code_for_tokens", side_effect=RuntimeError("boom")):

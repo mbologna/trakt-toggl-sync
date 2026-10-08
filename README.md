@@ -138,13 +138,14 @@ Cloud Run's filesystem is ephemeral, so this flow differs from the local/Docker/
 - **Tokens live in GCS, not on disk.** `TRAKT_TOKEN_FILE` (and `SYNC_STATE_FILE`) accept a `gs://bucket/object` path in addition to a local path: pass one and `utils.py` transparently reads/writes it via `google-cloud-storage` instead of the filesystem.
 - **The OAuth redirect can't use the local loopback server.** `authenticate()`'s `https://127.0.0.1:8843/callback` flow (used by `make run`) only works on a machine with a browser pointed at it. `/oauth/authorize` reuses the same underlying PKCE helpers but redirects through the service's own public URL instead, carrying the PKCE verifier across the redirect in a short-lived GCS object (`gs://$PKCE_STATE_BUCKET/pkce/<id>.json`, deleted once consumed).
 
-Required environment variables beyond the base set: `SYNC_SHARED_SECRET` (the real access gate: the service itself is deployed with `allUsers` invoker access, since Cloud Scheduler's OIDC auth doesn't cover arbitrary query params for the browser-based `/oauth/authorize` step) and `PKCE_STATE_BUCKET` (a GCS bucket for the short-lived PKCE handoff above).
+Required environment variables beyond the base set: `SYNC_SHARED_SECRET` (the real access gate: the service itself is deployed with `allUsers` invoker access, since Cloud Scheduler's OIDC auth doesn't cover arbitrary query params for the browser-based `/oauth/authorize` step), `PKCE_STATE_BUCKET` (a GCS bucket for the short-lived PKCE handoff above), and `SERVICE_BASE_URL` — the service's own public URL (e.g. `https://trakt-toggl-sync-xyz.a.run.app`), used to build the OAuth `redirect_uri`. This is deliberately a fixed env var rather than read from the request's `Host` header, since the latter is client-controlled and the redirect target is security-sensitive; both OAuth routes fail closed (500) if it's unset.
 
 **First-time setup**, once the service is deployed:
 
 ```bash
 # 1. Visit this in a browser to grant access (replace with your service URL and secret):
 open "https://<your-service-url>/oauth/authorize?secret=<SYNC_SHARED_SECRET>"
+# (SERVICE_BASE_URL must already be set to this same https://<your-service-url> on the service)
 
 # 2. Point Cloud Scheduler at /sync, e.g.:
 gcloud scheduler jobs create http trakt-toggl-sync \
