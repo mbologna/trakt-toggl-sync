@@ -1,5 +1,7 @@
 # trakt-toggl-sync
 
+[![CI](https://github.com/mbologna/trakt-toggl-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/mbologna/trakt-toggl-sync/actions/workflows/ci.yml)
+
 > Automatically sync Trakt viewing history to Toggl for complete time tracking
 
 > **Note:** Trakt re-enabled API application creation and now uses the [PKCE OAuth flow](https://developer.trakt.tv/docs/pkce) instead of the old device-code flow. No client secret is required anymore, only a client ID. When creating your app, set its **Redirect URI** to `https://127.0.0.1:8843/callback`: this must match exactly, or authentication will fail with `invalid_redirect`. During `authenticate()`, the script briefly runs a local HTTPS server (with a self-signed certificate) on that port to receive the authorization code automatically; your browser will show a one-time certificate warning that's safe to click through.
