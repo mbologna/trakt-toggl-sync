@@ -53,6 +53,17 @@ class TestSyncEndpoint:
         handler.do_POST()
         handler.send_response.assert_called_once_with(404)
 
+    def test_rejects_empty_secret_header_when_unconfigured(self, monkeypatch):
+        """If SYNC_SHARED_SECRET is ever left unset (empty string default), an
+        empty X-Sync-Secret header must not satisfy a naive equality check —
+        that would silently disable the one real gate on this public service."""
+        monkeypatch.setattr(server, "SYNC_SHARED_SECRET", "")
+        handler = _make_handler("/sync", headers={"X-Sync-Secret": ""})
+        with patch("sync.main") as mock_main:
+            handler.do_POST()
+        mock_main.assert_not_called()
+        handler.send_response.assert_called_once_with(403)
+
 
 class TestOAuthAuthorize:
     def test_rejects_missing_secret(self):

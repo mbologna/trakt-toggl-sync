@@ -13,6 +13,7 @@ The service is public (Cloud Run invoker allUsers) — SYNC_SHARED_SECRET is
 the real gate on both /sync and /oauth/authorize, not Cloud Run's IAM layer.
 """
 
+import hmac
 import http.server
 import os
 import sys
@@ -21,6 +22,19 @@ import uuid
 PORT = int(os.environ.get("PORT", 8080))
 SYNC_SHARED_SECRET = os.environ.get("SYNC_SHARED_SECRET", "")
 PKCE_STATE_BUCKET = os.environ.get("PKCE_STATE_BUCKET", "")
+
+
+def _secret_matches(provided):
+    """Constant-time compare against SYNC_SHARED_SECRET, failing closed if it's unset.
+
+    A plain `!=` check is timing-attackable, and — since SYNC_SHARED_SECRET
+    defaults to "" — would let an empty X-Sync-Secret/secret value through
+    if the env var is ever left unconfigured, silently disabling the one
+    real gate this public service has (see module docstring).
+    """
+    if not SYNC_SHARED_SECRET:
+        return False
+    return hmac.compare_digest(provided or "", SYNC_SHARED_SECRET)
 
 
 class SyncHandler(http.server.BaseHTTPRequestHandler):
@@ -37,7 +51,7 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/sync":
-            if self.headers.get("X-Sync-Secret") != SYNC_SHARED_SECRET:
+            if not _secret_matches(self.headers.get("X-Sync-Secret")):
                 self._respond(403, "forbidden")
                 return
             try:
@@ -66,7 +80,7 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
         from trakt import TraktAPI
 
         query = self._query()
-        if query.get("secret", [None])[0] != SYNC_SHARED_SECRET:
+        if not _secret_matches(query.get("secret", [None])[0]):
             self._respond(403, "forbidden")
             return
 
@@ -102,7 +116,7 @@ class SyncHandler(http.server.BaseHTTPRequestHandler):
         state = query.get("state", [None])[0] or ""
         secret, _, verifier_id = state.partition(":")
 
-        if not code or secret != SYNC_SHARED_SECRET or not verifier_id:
+        if not code or not verifier_id or not _secret_matches(secret):
             self._respond(403, "forbidden")
             return
 
