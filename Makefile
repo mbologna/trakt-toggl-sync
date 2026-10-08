@@ -120,18 +120,18 @@ k8s-deploy:
 	@echo ""
 	kubectl apply -f k8s/base/namespace.yaml
 	kubectl apply -f k8s/base/pvc.yaml
-	@if [ ! -f k8s/secret/configmap.yaml ]; then \
-		echo "❌ k8s/secret/configmap.yaml not found"; \
+	@if [ ! -f k8s/secrets/configmap.yaml ]; then \
+		echo "❌ k8s/secrets/configmap.yaml not found"; \
 		echo "Copy and edit k8s/base/configmap-template.yaml first"; \
 		exit 1; \
 	fi
-	@if [ ! -f k8s/secret/secret.yaml ]; then \
-		echo "❌ k8s/secret/secret.yaml not found"; \
+	@if [ ! -f k8s/secrets/secret.yaml ]; then \
+		echo "❌ k8s/secrets/secret.yaml not found"; \
 		echo "Copy and edit k8s/base/secret-template.yaml first"; \
 		exit 1; \
 	fi
-	kubectl apply -f k8s/secret/configmap.yaml
-	kubectl apply -f k8s/secret/secret.yaml
+	kubectl apply -f k8s/secrets/configmap.yaml
+	kubectl apply -f k8s/secrets/secret.yaml
 	kubectl apply -f k8s/base/cronjob.yaml
 	@echo ""
 	@echo "✓ Deployed to Kubernetes"

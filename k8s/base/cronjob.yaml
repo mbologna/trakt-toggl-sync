@@ -4,7 +4,8 @@ metadata:
   name: trakt-toggl-sync
   namespace: trakt-toggl
 spec:
-  # Run every 6 hours
+  # Run hourly, 20 minutes past the hour (after jellyfin-toggl-sync's hourly run,
+  # so has_overlapping_entry() almost always has something fresh to check against)
   schedule: "20 * * * *"
   # Keep last 3 successful and 1 failed job for debugging
   successfulJobsHistoryLimit: 3

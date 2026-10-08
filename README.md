@@ -23,7 +23,7 @@ This bridges productivity tracking with leisure tracking for a full view of my t
 - ✅ Retroactive close-in-time duplicate cleanup (24-hour window)
 - ✅ Automatic token refresh
 - ✅ Graceful rate limit handling
-- ✅ Multiple deployment options (local, Docker, Kubernetes)
+- ✅ Multiple deployment options (local, Docker, Cloud Run, Kubernetes)
 
 ## How It Works
 
@@ -123,9 +123,44 @@ make docker-push
 >
 > For local development, `make run` (which calls `uv run python -u sync.py` directly) is simpler and does not require Docker.
 
+### Cloud Run
+
+`src/server.py` is a minimal HTTP wrapper around `sync.py` built for deploying this as a Cloud Run service triggered by Cloud Scheduler, instead of running a long-lived CronJob somewhere. It serves three routes:
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/sync` | `POST` | Runs one sync cycle. Requires header `X-Sync-Secret: <SYNC_SHARED_SECRET>`. |
+| `/oauth/authorize` | `GET` | Starts the Trakt PKCE flow from any browser (no local machine needed). Requires `?secret=<SYNC_SHARED_SECRET>`. |
+| `/oauth/callback` | `GET` | Completes the PKCE flow; Trakt redirects here automatically. |
+
+Cloud Run's filesystem is ephemeral, so this flow differs from the local/Docker/Kubernetes ones in two ways:
+
+- **Tokens live in GCS, not on disk.** `TRAKT_TOKEN_FILE` (and `SYNC_STATE_FILE`) accept a `gs://bucket/object` path in addition to a local path — pass one and `utils.py` transparently reads/writes it via `google-cloud-storage` instead of the filesystem.
+- **The OAuth redirect can't use the local loopback server.** `authenticate()`'s `https://127.0.0.1:8843/callback` flow (used by `make run`) only works on a machine with a browser pointed at it. `/oauth/authorize` reuses the same underlying PKCE helpers but redirects through the service's own public URL instead, carrying the PKCE verifier across the redirect in a short-lived GCS object (`gs://$PKCE_STATE_BUCKET/pkce/<id>.json`, deleted once consumed).
+
+Required environment variables beyond the base set: `SYNC_SHARED_SECRET` (the real access gate — the service itself is deployed with `allUsers` invoker access, since Cloud Scheduler's OIDC auth doesn't cover arbitrary query params for the browser-based `/oauth/authorize` step) and `PKCE_STATE_BUCKET` (a GCS bucket for the short-lived PKCE handoff above).
+
+**First-time setup**, once the service is deployed:
+
+```bash
+# 1. Visit this in a browser to grant access (replace with your service URL and secret):
+open "https://<your-service-url>/oauth/authorize?secret=<SYNC_SHARED_SECRET>"
+
+# 2. Point Cloud Scheduler at /sync, e.g.:
+gcloud scheduler jobs create http trakt-toggl-sync \
+  --schedule="20 * * * *" \
+  --uri="https://<your-service-url>/sync" \
+  --http-method=POST \
+  --headers="X-Sync-Secret=<SYNC_SHARED_SECRET>"
+```
+
+If the Trakt refresh token ever expires outright (not just nears expiration — this needs the refresh token itself to be rejected), a scheduled `/sync` call will fail fast with a message pointing back at `/oauth/authorize?secret=...` rather than hanging — revisit that URL to re-authenticate.
+
+> This repo doesn't include the Terraform/IaC for the Cloud Run service, GCS buckets, or Cloud Scheduler job themselves — only the application code that expects to run in that environment. The CI `deploy` job in `.github/workflows/ci.yml` pushes to a Cloud Run service via a separate reusable workflow.
+
 ### Kubernetes
 
-The Kubernetes deployment uses a CronJob that runs every 6 hours with persistent storage for Trakt OAuth tokens.
+The Kubernetes deployment uses a CronJob that runs hourly, with persistent storage for Trakt OAuth tokens.
 
 #### Initial Setup
 
@@ -176,7 +211,7 @@ kubectl cp .trakt_tokens.json trakt-toggl/token-copy:/data/.trakt_tokens.json
 
 #### Automation via CronJob
 
-The Kubernetes deployment uses a CronJob that runs every 6 hours with persistent storage for Trakt OAuth tokens.
+The Kubernetes deployment uses a CronJob that runs hourly, with persistent storage for Trakt OAuth tokens.
 
 ##### Management Commands
 
