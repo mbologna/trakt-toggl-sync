@@ -143,6 +143,58 @@ class TestTraktAPI:
         assert "Unknown" in result
 
 
+class TestTraktRemoveDuplicates:
+    """Test TraktAPI.remove_duplicates()."""
+
+    def _make_api(self):
+        return TraktAPI("client_id", "tokens.json")
+
+    def test_keeps_most_recently_watched_per_item(self):
+        """Among entries sharing the same (type, trakt id), only the one with
+        the latest watched_at survives; the rest are removed."""
+        api = self._make_api()
+        history = [
+            {"id": 1, "type": "movie", "watched_at": "2025-01-01T10:00:00Z", "movie": {"ids": {"trakt": 100}}},
+            {"id": 2, "type": "movie", "watched_at": "2025-01-05T10:00:00Z", "movie": {"ids": {"trakt": 100}}},
+            {"id": 3, "type": "episode", "watched_at": "2025-01-01T10:00:00Z", "episode": {"ids": {"trakt": 200}}},
+        ]
+
+        with patch.object(api, "fetch_full_history", return_value=history):
+            with patch("requests.post") as mock_post:
+                mock_post.return_value.status_code = 200
+                api.remove_duplicates("access_token")
+
+        sent_ids = mock_post.call_args.kwargs["json"]["ids"]
+        assert sent_ids == [1]
+
+    def test_no_duplicates_skips_delete_call(self):
+        api = self._make_api()
+        history = [
+            {"id": 1, "type": "movie", "watched_at": "2025-01-01T10:00:00Z", "movie": {"ids": {"trakt": 100}}},
+            {"id": 2, "type": "episode", "watched_at": "2025-01-01T10:00:00Z", "episode": {"ids": {"trakt": 200}}},
+        ]
+
+        with patch.object(api, "fetch_full_history", return_value=history):
+            with patch("requests.post") as mock_post:
+                api.remove_duplicates("access_token")
+
+        mock_post.assert_not_called()
+
+    def test_entries_missing_trakt_id_are_ignored(self):
+        """Entries with no resolvable trakt id can't be deduped and are left alone."""
+        api = self._make_api()
+        history = [
+            {"id": 1, "type": "movie", "watched_at": "2025-01-01T10:00:00Z", "movie": {"ids": {}}},
+            {"id": 2, "type": "movie", "watched_at": "2025-01-02T10:00:00Z", "movie": {"ids": {}}},
+        ]
+
+        with patch.object(api, "fetch_full_history", return_value=history):
+            with patch("requests.post") as mock_post:
+                api.remove_duplicates("access_token")
+
+        mock_post.assert_not_called()
+
+
 class TestTraktAuthenticate:
     """Test TraktAPI.authenticate() — PKCE OAuth flow."""
 
@@ -270,6 +322,29 @@ class TestTraktRefreshToken:
             mock_post.return_value.raise_for_status.side_effect = http_error
             with pytest.raises(requests.exceptions.HTTPError):
                 api.refresh_token("some_refresh")
+
+    def test_refresh_token_400_fails_fast_under_custom_redirect_uri(self, tmp_path):
+        """A non-default redirect_uri means we're running under server.py's Cloud
+        Run flow, which has no browser/loopback interface to complete the local
+        authenticate() flow. On a 400 it must raise immediately with an actionable
+        message instead of hanging on the local callback server until auth_timeout.
+        """
+        token_file = tmp_path / "tokens.json"
+        token_file.write_text('{"old": true}')
+        api = TraktAPI("client_id", str(token_file), redirect_uri="https://service.run.app/oauth/callback")
+
+        error_response = Mock()
+        error_response.status_code = 400
+        http_error = requests.exceptions.HTTPError(response=error_response)
+
+        with patch("requests.post") as mock_post:
+            mock_post.return_value.raise_for_status.side_effect = http_error
+            with patch.object(api, "authenticate") as mock_auth:
+                with pytest.raises(RuntimeError, match="/oauth/authorize"):
+                    api.refresh_token("expired_refresh")
+
+        mock_auth.assert_not_called()
+        assert not token_file.exists()
 
 
 class TestTogglAPI:
@@ -566,6 +641,110 @@ class TestTogglRemoveDuplicatesReportsAPI:
         with patch.object(api, "_fetch_reports_entries", side_effect=http_error):
             with pytest.raises(requests.exceptions.HTTPError):
                 api.remove_duplicates()
+
+    def test_exact_duplicates_keep_highest_id(self):
+        """Among entries with identical (description, start, stop), all but the
+        highest-id one are deleted."""
+        api = self._make_api()
+        entries = [
+            {
+                "id": 1,
+                "project_id": 456,
+                "description": "A",
+                "start": "2025-06-01T10:00:00Z",
+                "stop": "2025-06-01T11:00:00Z",
+            },
+            {
+                "id": 2,
+                "project_id": 456,
+                "description": "A",
+                "start": "2025-06-01T10:00:00Z",
+                "stop": "2025-06-01T11:00:00Z",
+            },
+            {
+                "id": 3,
+                "project_id": 456,
+                "description": "B",
+                "start": "2025-06-02T10:00:00Z",
+                "stop": "2025-06-02T11:00:00Z",
+            },
+        ]
+
+        with patch.object(api, "_fetch_reports_entries", return_value=entries):
+            with patch("requests.delete") as mock_delete:
+                mock_delete.return_value.status_code = 200
+                api.remove_duplicates()
+
+        deleted_ids = {call.args[0].rsplit("/", 1)[-1] for call in mock_delete.call_args_list}
+        assert deleted_ids == {"1"}
+
+    def test_close_in_time_duplicates_keep_highest_id(self):
+        """Same-description entries starting within 24h of each other are
+        chained into one cluster; all but the highest-id one are deleted."""
+        api = self._make_api()
+        entries = [
+            {
+                "id": 10,
+                "project_id": 456,
+                "description": "Rewatch",
+                "start": "2025-06-01T10:00:00Z",
+                "stop": "2025-06-01T11:00:00Z",
+            },
+            {
+                "id": 20,
+                "project_id": 456,
+                "description": "Rewatch",
+                "start": "2025-06-01T20:00:00Z",
+                "stop": "2025-06-01T21:00:00Z",
+            },
+            {
+                "id": 5,
+                "project_id": 456,
+                "description": "Rewatch",
+                "start": "2025-06-05T10:00:00Z",
+                "stop": "2025-06-05T11:00:00Z",
+            },
+        ]
+
+        with patch.object(api, "_fetch_reports_entries", return_value=entries):
+            with patch("requests.delete") as mock_delete:
+                mock_delete.return_value.status_code = 200
+                api.remove_duplicates()
+
+        # entries 10 and 20 are within 24h of each other (one cluster, keep 20);
+        # entry 5 is >24h away from both, forming its own cluster of one (kept)
+        deleted_ids = {call.args[0].rsplit("/", 1)[-1] for call in mock_delete.call_args_list}
+        assert deleted_ids == {"10"}
+
+    def test_close_in_time_pass_skips_entries_already_deleted_in_first_pass(self):
+        """An entry removed as an exact duplicate in the first pass must not be
+        deleted again in the close-in-time pass."""
+        api = self._make_api()
+        entries = [
+            {
+                "id": 1,
+                "project_id": 456,
+                "description": "A",
+                "start": "2025-06-01T10:00:00Z",
+                "stop": "2025-06-01T11:00:00Z",
+            },
+            {
+                "id": 2,
+                "project_id": 456,
+                "description": "A",
+                "start": "2025-06-01T10:00:00Z",
+                "stop": "2025-06-01T11:00:00Z",
+            },
+        ]
+
+        with patch.object(api, "_fetch_reports_entries", return_value=entries):
+            with patch("requests.delete") as mock_delete:
+                mock_delete.return_value.status_code = 200
+                api.remove_duplicates()
+
+        # Only one delete call total (id 1, from the exact-duplicate pass) — the
+        # close-in-time pass must not issue a second delete call for the same pair.
+        assert mock_delete.call_count == 1
 
 
 class TestTogglFindExistingEntry:

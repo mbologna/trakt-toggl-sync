@@ -221,10 +221,21 @@ class TraktAPI:
             return tokens
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 400:
-                print(f"[{timestamp()}] Refresh token expired. Re-authenticating...")
-                sys.stdout.flush()
                 if os.path.exists(self.token_file):
                     os.remove(self.token_file)
+                if self.redirect_uri != self.REDIRECT_URI:
+                    # A non-default redirect_uri means we're running under server.py's
+                    # Cloud Run flow, which has no browser or loopback interface to
+                    # complete authenticate()'s local flow — it would just bind the
+                    # port, fail to open a browser, and hang until auth_timeout (300s)
+                    # before raising a confusing "no code received" error. Fail fast
+                    # with the actionable fix instead.
+                    raise RuntimeError(
+                        f"[{timestamp()}] Refresh token expired. Re-authenticate via "
+                        "GET /oauth/authorize?secret=<SYNC_SHARED_SECRET> on the deployed service."
+                    ) from e
+                print(f"[{timestamp()}] Refresh token expired. Re-authenticating...")
+                sys.stdout.flush()
                 return self.authenticate()
             else:
                 raise
@@ -295,6 +306,7 @@ class TraktAPI:
         history = self.fetch_full_history(access_token)
 
         unique_items = {}
+        keyed_entries = []
         for entry in history:
             # Create unique key based on type and ID
             if entry["type"] == "movie":
@@ -303,13 +315,16 @@ class TraktAPI:
                 item_key = ("episode", entry.get("episode", {}).get("ids", {}).get("trakt"))
 
             if not item_key[1]:
+                # Can't dedupe without an id — leave it alone rather than treating
+                # "never keyed" the same as "superseded" below and deleting it.
                 continue
+            keyed_entries.append(entry)
 
             # Keep entry with most recent watched_at date
             if item_key not in unique_items or unique_items[item_key]["watched_at"] < entry["watched_at"]:
                 unique_items[item_key] = entry
 
-        duplicates = [entry for entry in history if entry not in unique_items.values()]
+        duplicates = [entry for entry in keyed_entries if entry not in unique_items.values()]
 
         if duplicates:
             print(f"[{timestamp()}] Found {len(duplicates)} duplicate Trakt entries to remove:")
