@@ -135,10 +135,10 @@ make docker-push
 
 Cloud Run's filesystem is ephemeral, so this flow differs from the local/Docker/Kubernetes ones in two ways:
 
-- **Tokens live in GCS, not on disk.** `TRAKT_TOKEN_FILE` (and `SYNC_STATE_FILE`) accept a `gs://bucket/object` path in addition to a local path — pass one and `utils.py` transparently reads/writes it via `google-cloud-storage` instead of the filesystem.
+- **Tokens live in GCS, not on disk.** `TRAKT_TOKEN_FILE` (and `SYNC_STATE_FILE`) accept a `gs://bucket/object` path in addition to a local path: pass one and `utils.py` transparently reads/writes it via `google-cloud-storage` instead of the filesystem.
 - **The OAuth redirect can't use the local loopback server.** `authenticate()`'s `https://127.0.0.1:8843/callback` flow (used by `make run`) only works on a machine with a browser pointed at it. `/oauth/authorize` reuses the same underlying PKCE helpers but redirects through the service's own public URL instead, carrying the PKCE verifier across the redirect in a short-lived GCS object (`gs://$PKCE_STATE_BUCKET/pkce/<id>.json`, deleted once consumed).
 
-Required environment variables beyond the base set: `SYNC_SHARED_SECRET` (the real access gate — the service itself is deployed with `allUsers` invoker access, since Cloud Scheduler's OIDC auth doesn't cover arbitrary query params for the browser-based `/oauth/authorize` step) and `PKCE_STATE_BUCKET` (a GCS bucket for the short-lived PKCE handoff above).
+Required environment variables beyond the base set: `SYNC_SHARED_SECRET` (the real access gate: the service itself is deployed with `allUsers` invoker access, since Cloud Scheduler's OIDC auth doesn't cover arbitrary query params for the browser-based `/oauth/authorize` step) and `PKCE_STATE_BUCKET` (a GCS bucket for the short-lived PKCE handoff above).
 
 **First-time setup**, once the service is deployed:
 
@@ -154,9 +154,9 @@ gcloud scheduler jobs create http trakt-toggl-sync \
   --headers="X-Sync-Secret=<SYNC_SHARED_SECRET>"
 ```
 
-If the Trakt refresh token ever expires outright (not just nears expiration — this needs the refresh token itself to be rejected), a scheduled `/sync` call will fail fast with a message pointing back at `/oauth/authorize?secret=...` rather than hanging — revisit that URL to re-authenticate.
+If the Trakt refresh token ever expires outright (not just nears expiration: this needs the refresh token itself to be rejected), a scheduled `/sync` call will fail fast with a message pointing back at `/oauth/authorize?secret=...` rather than hanging; revisit that URL to re-authenticate.
 
-> This repo doesn't include the Terraform/IaC for the Cloud Run service, GCS buckets, or Cloud Scheduler job themselves — only the application code that expects to run in that environment. The CI `deploy` job in `.github/workflows/ci.yml` pushes to a Cloud Run service via a separate reusable workflow.
+> This repo doesn't include the Terraform/IaC for the Cloud Run service, GCS buckets, or Cloud Scheduler job themselves: only the application code that expects to run in that environment. The CI `deploy` job in `.github/workflows/ci.yml` pushes to a Cloud Run service via a separate reusable workflow.
 
 ### Kubernetes
 
