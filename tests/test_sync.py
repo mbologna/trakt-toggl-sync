@@ -71,6 +71,87 @@ class TestUtilityFunctions:
         assert test_file.exists()
 
 
+class TestUtilityFunctionsGCS:
+    """Test load/save/delete_json_file's gs:// branch (used on Cloud Run, where
+    the filesystem is ephemeral) against a mocked google.cloud.storage.Client."""
+
+    def _mock_client(self, monkeypatch):
+        mock_client_cls = Mock()
+        mock_blob = Mock()
+        mock_client_cls.return_value.bucket.return_value.blob.return_value = mock_blob
+        monkeypatch.setattr("google.cloud.storage.Client", mock_client_cls)
+        return mock_client_cls, mock_blob
+
+    def test_load_json_file_gcs_success(self, monkeypatch):
+        _, mock_blob = self._mock_client(monkeypatch)
+        mock_blob.download_as_text.return_value = '{"access_token": "abc"}'
+
+        result = utils.load_json_file("gs://my-bucket/pkce/abc.json")
+
+        assert result == {"access_token": "abc"}
+
+    def test_load_json_file_gcs_uses_correct_bucket_and_blob(self, monkeypatch):
+        mock_client_cls, mock_blob = self._mock_client(monkeypatch)
+        mock_blob.download_as_text.return_value = "{}"
+
+        utils.load_json_file("gs://my-bucket/nested/path/file.json")
+
+        mock_client_cls.return_value.bucket.assert_called_once_with("my-bucket")
+        mock_client_cls.return_value.bucket.return_value.blob.assert_called_once_with("nested/path/file.json")
+
+    def test_load_json_file_gcs_not_found_returns_none(self, monkeypatch):
+        from google.cloud.exceptions import NotFound
+
+        _, mock_blob = self._mock_client(monkeypatch)
+        mock_blob.download_as_text.side_effect = NotFound("no such object")
+
+        result = utils.load_json_file("gs://my-bucket/missing.json")
+
+        assert result is None
+
+    def test_load_json_file_gcs_empty_returns_none(self, monkeypatch):
+        _, mock_blob = self._mock_client(monkeypatch)
+        mock_blob.download_as_text.return_value = "   "
+
+        assert utils.load_json_file("gs://my-bucket/empty.json") is None
+
+    def test_load_json_file_gcs_invalid_json_returns_none(self, monkeypatch):
+        _, mock_blob = self._mock_client(monkeypatch)
+        mock_blob.download_as_text.return_value = "{not valid json"
+
+        assert utils.load_json_file("gs://my-bucket/bad.json") is None
+
+    def test_save_json_file_gcs_uploads_with_content_type(self, monkeypatch):
+        mock_client_cls, mock_blob = self._mock_client(monkeypatch)
+
+        utils.save_json_file("gs://my-bucket/state.json", {"key": "value"})
+
+        mock_client_cls.return_value.bucket.assert_called_once_with("my-bucket")
+        mock_client_cls.return_value.bucket.return_value.blob.assert_called_once_with("state.json")
+        mock_blob.upload_from_string.assert_called_once()
+        uploaded_content, kwargs = (
+            mock_blob.upload_from_string.call_args.args[0],
+            mock_blob.upload_from_string.call_args.kwargs,
+        )
+        assert json.loads(uploaded_content) == {"key": "value"}
+        assert kwargs["content_type"] == "application/json"
+
+    def test_delete_json_file_gcs_deletes_blob(self, monkeypatch):
+        _, mock_blob = self._mock_client(monkeypatch)
+
+        utils.delete_json_file("gs://my-bucket/state.json")
+
+        mock_blob.delete.assert_called_once()
+
+    def test_delete_json_file_gcs_not_found_is_noop(self, monkeypatch):
+        from google.cloud.exceptions import NotFound
+
+        _, mock_blob = self._mock_client(monkeypatch)
+        mock_blob.delete.side_effect = NotFound("already gone")
+
+        utils.delete_json_file("gs://my-bucket/already-gone.json")  # must not raise
+
+
 class TestCheckRequiredEnvVariables:
     """Test environment variable validation."""
 
