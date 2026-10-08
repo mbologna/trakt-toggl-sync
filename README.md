@@ -2,7 +2,7 @@
 
 > Automatically sync Trakt viewing history to Toggl for complete time tracking
 
-> **Note:** Trakt re-enabled API application creation and now uses the [PKCE OAuth flow](https://developer.trakt.tv/docs/pkce) instead of the old device-code flow. No client secret is required anymore — only a client ID. When creating your app, set its **Redirect URI** to `https://127.0.0.1:8843/callback` — this must match exactly, or authentication will fail with `invalid_redirect`. During `authenticate()`, the script briefly runs a local HTTPS server (with a self-signed certificate) on that port to receive the authorization code automatically; your browser will show a one-time certificate warning that's safe to click through.
+> **Note:** Trakt re-enabled API application creation and now uses the [PKCE OAuth flow](https://developer.trakt.tv/docs/pkce) instead of the old device-code flow. No client secret is required anymore, only a client ID. When creating your app, set its **Redirect URI** to `https://127.0.0.1:8843/callback`: this must match exactly, or authentication will fail with `invalid_redirect`. During `authenticate()`, the script briefly runs a local HTTPS server (with a self-signed certificate) on that port to receive the authorization code automatically; your browser will show a one-time certificate warning that's safe to click through.
 
 ## Motivation
 
@@ -29,7 +29,7 @@ This bridges productivity tracking with leisure tracking for a full view of my t
 
 1. **Deduplicate Trakt** - Removes duplicate watch history entries
 2. **Deduplicate Toggl** - Removes duplicate time entries, including a second pass that clusters entries with the same title within 24 hours and keeps only the most recently created one (retroactive re-watch cleanup)
-3. **Sync** - Creates or updates Toggl entries for recent Trakt history (default: 7 days), using a persistent state file (`.sync_state.json`) to map each Trakt content ID to its Toggl entry ID—preventing duplicate entries when the same episode is re-watched across sync runs
+3. **Sync** - Creates or updates Toggl entries for recent Trakt history (default: 7 days), using a persistent state file (`.sync_state.json`) to map each Trakt content ID to its Toggl entry ID, preventing duplicate entries when the same episode is re-watched across sync runs
 
 Rate limits are handled gracefully: if Toggl returns 402, deduplication is skipped and sync continues.
 
@@ -164,7 +164,7 @@ kubectl apply -f k8s/base/cronjob.yaml
 Trakt's PKCE flow redirects to a local HTTPS server on the machine running the script (`https://127.0.0.1:8843/callback`), so it can't complete from inside a headless pod. Authenticate locally first, then copy the resulting token file onto the PVC:
 
 ```bash
-# Authenticate locally — opens your browser to approve, then saves .trakt_tokens.json
+# Authenticate locally: opens your browser to approve, then saves .trakt_tokens.json
 make run
 
 # Copy the token file onto the PVC via a temporary pod
