@@ -56,13 +56,16 @@ def process_history_item(item, toggl_api, sync_state, state_file):
     new_id = None
 
     if existing_toggl_id:
+        unchanged = toggl_api.find_existing_entry(title, start_iso, watched_at)
+        if unchanged and unchanged.get("id") == existing_toggl_id:
+            return
         new_id = toggl_api.update_entry(existing_toggl_id, title, start_iso, watched_at)
         if new_id is None:
             # Entry was deleted from Toggl; fall through to create
             print(f"[{timestamp()}] State entry gone from Toggl, recreating: {title}")
 
     if new_id is None:
-        if toggl_api.has_overlapping_entry(watched_at, runtime):
+        if toggl_api.has_overlapping_entry(watched_at, runtime, description=title, ignore_ids=set(sync_state.values())):
             print(f"[{timestamp()}] Skipped (already logged via Jellyfin): {title}")
             return
         new_id = toggl_api.create_entry(description=title, start_time=start_iso, end_time=watched_at)

@@ -32,6 +32,8 @@ This bridges productivity tracking with leisure tracking for a full view of my t
 1. **Deduplicate Trakt** - Removes duplicate watch history entries
 2. **Deduplicate Toggl** - Removes duplicate time entries, including a second pass that clusters entries with the same title within 24 hours and keeps only the most recently created one (retroactive re-watch cleanup)
 3. **Sync** - Creates or updates Toggl entries for recent Trakt history (default: 7 days), using a persistent state file (`.sync_state.json`) to map each Trakt content ID to its Toggl entry ID, preventing duplicate entries when the same episode is re-watched across sync runs
+   - Entries that are already up to date are left alone instead of being rewritten every run
+   - A watch is skipped as "already logged via Jellyfin" only if another entry for the *same* episode (show + SxxEyy) or movie starts within its viewing window plus 4 hours, and this sync didn't create it. Back-to-back episodes each get their own entry.
 
 Rate limits are handled gracefully: if Toggl returns 402, deduplication is skipped and sync continues.
 

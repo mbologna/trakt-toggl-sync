@@ -683,6 +683,49 @@ class TestTogglHasOverlappingEntry:
             result = api.has_overlapping_entry("2025-06-01T21:00:00.000Z", runtime_minutes=60)
         assert result is False
 
+    def test_ignores_own_entries(self):
+        """An entry this sync created (e.g. the previous episode) is never a Jellyfin match."""
+        api = self._make_api()
+        api._cached_entries = [
+            {"id": 7, "project_id": 456, "start": "2025-06-01T20:00:00Z", "description": "📺 Show - S01E07 - Ghosts"},
+        ]
+        assert api.has_overlapping_entry("2025-06-01T21:00:00.000Z", runtime_minutes=60, ignore_ids={7}) is False
+
+    def test_binge_previous_episode_does_not_match(self):
+        """With a description, only an entry for the same episode counts."""
+        api = self._make_api()
+        api._cached_entries = [
+            {"id": 7, "project_id": 456, "start": "2025-06-01T20:00:00Z", "description": "📺 Show - S01E07 - Ghosts"},
+        ]
+        assert (
+            api.has_overlapping_entry(
+                "2025-06-01T21:58:00.000Z", runtime_minutes=58, description="📺 Show - S01E08 - The Last Word"
+            )
+            is False
+        )
+
+    def test_same_episode_with_different_title_matches(self):
+        """Jellyfin and Trakt may name the episode differently; show + SxxEyy is enough."""
+        api = self._make_api()
+        api._cached_entries = [
+            {
+                "id": 9,
+                "project_id": 456,
+                "start": "2025-06-01T21:00:00Z",
+                "description": "📺 Show - S01E08 - Last Word",
+            },
+        ]
+        assert (
+            api.has_overlapping_entry(
+                "2025-06-01T21:58:00.000Z", runtime_minutes=58, description="📺 Show - S01E08 - The Last Word"
+            )
+            is True
+        )
+
+    def test_same_movie_with_different_year_matches(self):
+        assert TogglAPI.same_item("🎞️ Me Before You (2016)", "🎞️ me before you (2015)") is True
+        assert TogglAPI.same_item("🎞️ Dr. No (1962)", "🎞️ Me Before You (2016)") is False
+
 
 class TestTogglRemoveDuplicatesReportsAPI:
     """Test that remove_duplicates() fetches via the Reports API and filters by project."""
@@ -1168,6 +1211,29 @@ class TestSyncProcessHistoryItem:
 
         mock_create.assert_not_called()
         assert sync_state == {}
+
+    def test_unchanged_state_entry_is_not_updated(self, tmp_path):
+        """An entry already in state and identical in Toggl needs no PUT."""
+        from sync import process_history_item
+
+        toggl = self._make_toggl()
+        toggl._cached_entries = [
+            {
+                "id": 999,
+                "project_id": 456,
+                "wid": 123,
+                "tags": ["trakt"],
+                "description": "🎞️ The Matrix (1999)",
+                "start": "2025-01-01T09:44:00Z",
+                "stop": "2025-01-01T12:00:00Z",
+            }
+        ]
+        sync_state = {"movie:1": 999}
+
+        with patch.object(toggl, "update_entry") as mock_update:
+            process_history_item(self._movie_item(), toggl, sync_state, str(tmp_path / "state.json"))
+
+        mock_update.assert_not_called()
 
     def test_creates_movie_entry_and_saves_state(self, tmp_path):
         from sync import process_history_item

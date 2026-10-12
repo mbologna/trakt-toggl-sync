@@ -214,9 +214,28 @@ class TogglAPI:
             return True  # Assume exists to avoid creating duplicates when rate limited
         return self.find_existing_entry(description, start_time, end_time) is not None
 
-    def has_overlapping_entry(self, watched_at, runtime_minutes, buffer_hours=4):
-        """True if any cached entry in this project starts within this item's
-        own viewing window, regardless of description.
+    @staticmethod
+    def same_item(description_a, description_b):
+        """True if two entry descriptions name the same episode or movie.
+
+        Both syncs write "📺 Show - S01E02 - Title" / "🎞️ Title (Year)", but
+        Jellyfin and Trakt can disagree on episode titles and release years,
+        so compare only "📺 Show - S01E02" for episodes and the title for movies.
+        """
+
+        def key(description):
+            description = (description or "").strip().casefold()
+            if description.startswith("📺"):
+                return " - ".join(description.split(" - ")[:2])
+            if description.endswith(")") and " (" in description:
+                return description.rsplit(" (", 1)[0]
+            return description
+
+        return key(description_a) == key(description_b)
+
+    def has_overlapping_entry(self, watched_at, runtime_minutes, buffer_hours=4, description=None, ignore_ids=()):
+        """True if a cached entry in this project for the same item starts
+        within this item's own viewing window.
 
         Used to avoid double-logging a watch that Jellyfin's Trakt plugin
         auto-scrobbled (jellyfin-toggl-sync will have already logged it,
@@ -224,6 +243,11 @@ class TogglAPI:
         paused Jellyfin session, whose logged range ends earlier than this
         item's real-world watched_at — a strict interval-overlap check would
         miss that case.
+
+        Entries this sync created itself (ignore_ids) never count, and when a
+        description is given only an entry for the same item does: otherwise
+        the previous episode of a binge, logged minutes earlier, falls inside
+        the buffer and the next episode is wrongly skipped.
         """
         entries = self.get_cached_entries()
         if entries is None:
@@ -234,6 +258,10 @@ class TogglAPI:
 
         for entry in entries:
             if entry.get("project_id") != self.project_id:
+                continue
+            if entry.get("id") in ignore_ids:
+                continue
+            if description is not None and not self.same_item(entry.get("description"), description):
                 continue
             start_dt = self.normalize_timestamp(entry["start"])
             if window_start <= start_dt <= watched_dt:
